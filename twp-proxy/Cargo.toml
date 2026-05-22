@@ -1,0 +1,30 @@
+[package]
+name = "twp-proxy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# PTY wrapping
+portable-pty = "0.9"
+
+# Image generation
+takumi = "1.4"
+image = "0.25"
+
+# Hashing for content-addressed image IDs
+blake3 = "1"
+
+# Base64 encoding for Kitty Graphics transmission payloads
+base64 = "0.22"
+
+# Signals (SIGWINCH) and termios
+nix = { version = "0.29", features = ["term", "signal", "fs"] }
+
+# Note: vte was specified as a dependency, but vte 0.15 (current) does not
+# expose APC bytes via the Perform trait — APC strings go into the
+# SosPmApcString state and are silently discarded. We implement a small
+# byte-level state machine for APC framing instead. See src/parser.rs.
+
+[profile.release]
+opt-level = 3
+lto = "thin"

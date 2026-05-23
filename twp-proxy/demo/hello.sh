@@ -100,19 +100,22 @@ echo "   Below the line"
 echo
 
 # ─── 7. Text rendering parity — TWP text vs native terminal text ──────
+# Widget bg+fg hardcoded to the user's Kitty config so the widget blends
+# into the surrounding terminal; only the glyphs remain to compare. (A
+# Phase 2 feature will query the terminal for these via OSC 10/11.)
 echo "7) Text parity: native echo vs TWP text node (same string)"
 echo "   --------------------------------------------------------"
-echo "   If our font discovery + size calibration is right, the two lines"
-echo "   below should look indistinguishable — same font family, same size."
+echo "   If font discovery + size calibration + colour matching are right,"
+echo "   the widget line should look indistinguishable from the native one."
 echo
 echo "   Native:  Hello, world! 0123456789"
 echo -n "   Widget:  "
-twp 'v=1,c=28,r=1' '{"S":{"n":"text","t":"Hello, world! 0123456789","s":{"font-size":32}}}'
+twp 'v=1,c=28,r=1' '{"S":{"n":"flex","s":{"justify-content":"start","align-items":"center","width":"100%","height":"100%","background":"#0a1e24"},"c":[{"n":"text","t":"Hello, world! 0123456789","s":{"font-size":32,"color":"#ecefc1"}}]}}'
 echo
 echo
 echo "   Native (bold):  STATUS: OK"
 echo -n "   Widget (bold):  "
-twp 'v=1,c=14,r=1' '{"S":{"n":"text","t":"STATUS: OK","s":{"font-size":32,"font-weight":"bold"}}}'
+twp 'v=1,c=14,r=1' '{"S":{"n":"flex","s":{"justify-content":"start","align-items":"center","width":"100%","height":"100%","background":"#0a1e24"},"c":[{"n":"text","t":"STATUS: OK","s":{"font-size":32,"font-weight":"bold","color":"#ecefc1"}}]}}'
 echo
 echo
 

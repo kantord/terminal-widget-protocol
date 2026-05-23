@@ -343,6 +343,7 @@ fn to_takumi(node: &Node) -> TakumiNode {
             let text = node.t.as_deref().unwrap_or("");
             TakumiNode::text(text).with_style(style)
         }
+        "mono" => build_mono(node),
         // "flex", "box", or anything not text (including unfilled-component
         // placeholders). Layout differences are encoded via the `display`
         // declaration applied in build_style.
@@ -351,6 +352,84 @@ fn to_takumi(node: &Node) -> TakumiNode {
             TakumiNode::container(children).with_style(style)
         }
     }
+}
+
+/// Build a monospace-grid text node: each character gets its own
+/// fixed-width cell box, so glyph positions are determined by the grid
+/// and not by the font's advance width. Zero drift by construction.
+fn build_mono(node: &Node) -> TakumiNode {
+    let text = node.t.as_deref().unwrap_or("");
+    let s = &node.s;
+    let font_size_px = s.font_size.unwrap_or(DEFAULT_FONT_SIZE_PX);
+    let weight: u16 = match &s.font_weight {
+        Some(FontWeight::Name(n)) if n == "bold" => 700,
+        Some(FontWeight::Number(n)) => *n,
+        _ => 400,
+    };
+    let family_key = if weight >= 700 { FAMILY_BOLD } else { FAMILY_REGULAR };
+    let fg_color = s.color.as_deref().and_then(parse_color);
+
+    // Build a flex row of single-character cells.
+    let cell_w = PX_PER_COL as f32;
+    let cells: Vec<TakumiNode> = text
+        .chars()
+        .map(|ch| {
+            let mut char_style = TkStyle::default()
+                .with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
+                    font_size_px,
+                ))))
+                .with(StyleDeclaration::font_feature_settings(
+                    disable_ligatures(),
+                ));
+            if let Ok(ff) = FontFamily::from_str(&format!("\"{family_key}\"")) {
+                char_style = char_style.with(StyleDeclaration::font_family(ff));
+            }
+            // Don't set font-weight — we already selected the correct
+            // font file via family_key. Requesting weight 700 on a font
+            // whose internal metadata says 400 makes parley fail to match.
+            if let Some(c) = fg_color {
+                char_style =
+                    char_style.with(StyleDeclaration::color(ColorInput::from(c)));
+            }
+            let glyph = TakumiNode::text(ch.to_string()).with_style(char_style);
+
+            let cell_style = TkStyle::default()
+                .with(StyleDeclaration::display(Display::Flex))
+                .with(StyleDeclaration::justify_content(JustifyContent::Center))
+                .with(StyleDeclaration::align_items(AlignItems::Center))
+                .with(StyleDeclaration::width(Length::Px(cell_w)))
+                .with(StyleDeclaration::height(Length::Percentage(100.0)));
+            TakumiNode::container(vec![glyph]).with_style(cell_style)
+        })
+        .collect();
+
+    // Outer container: flex row, no gap.
+    let mut outer_style = TkStyle::default()
+        .with(StyleDeclaration::display(Display::Flex))
+        .with(StyleDeclaration::flex_direction(FlexDirection::Row))
+        .with(StyleDeclaration::align_items(AlignItems::Center));
+
+    // Apply visual styling from the node (background, padding, etc.).
+    if let Some(bg) = s.background.as_deref().and_then(parse_color) {
+        outer_style =
+            outer_style.with(StyleDeclaration::background_color(ColorInput::from(bg)));
+    }
+    if let Some(w) = s.width {
+        outer_style = outer_style.with(StyleDeclaration::width(to_length(w)));
+    }
+    if let Some(h) = s.height {
+        outer_style = outer_style.with(StyleDeclaration::height(to_length(h)));
+    }
+    if let Some(r) = s.border_radius {
+        let pair = SpacePair::from_single(to_length_zero(r));
+        outer_style = outer_style
+            .with(StyleDeclaration::border_top_left_radius(pair))
+            .with(StyleDeclaration::border_top_right_radius(pair))
+            .with(StyleDeclaration::border_bottom_right_radius(pair))
+            .with(StyleDeclaration::border_bottom_left_radius(pair));
+    }
+
+    TakumiNode::container(cells).with_style(outer_style)
 }
 
 fn default_display_for(node_name: &str) -> Display {

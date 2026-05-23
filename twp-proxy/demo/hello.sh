@@ -108,14 +108,14 @@ echo "   --------------------------------------------------------"
 echo "   If font discovery + size calibration + colour matching are right,"
 echo "   the widget line should look indistinguishable from the native one."
 echo
-echo "   Native:  Hello, world! 0123456789"
+echo "   Native:  The quick brown fox jumps over the lazy dog. 0123456789"
 echo -n "   Widget:  "
-twp 'v=1,c=28,r=1' '{"S":{"n":"flex","s":{"justify-content":"start","align-items":"center","width":"100%","height":"100%","background":"#0a1e24"},"c":[{"n":"text","t":"Hello, world! 0123456789","s":{"font-size":32,"color":"#ecefc1"}}]}}'
+twp 'v=1,c=60,r=1' '{"S":{"n":"flex","s":{"justify-content":"start","align-items":"center","width":"100%","height":"100%","background":"#0a1e24"},"c":[{"n":"text","t":"The quick brown fox jumps over the lazy dog. 0123456789","s":{"font-size":32,"color":"#ecefc1"}}]}}'
 echo
 echo
-echo "   Native (bold):  STATUS: OK"
+echo "   Native (bold):  STATUS PASS  STATUS WARN  STATUS FAIL  STATUS BLOCKED"
 echo -n "   Widget (bold):  "
-twp 'v=1,c=14,r=1' '{"S":{"n":"flex","s":{"justify-content":"start","align-items":"center","width":"100%","height":"100%","background":"#0a1e24"},"c":[{"n":"text","t":"STATUS: OK","s":{"font-size":32,"font-weight":"bold","color":"#ecefc1"}}]}}'
+twp 'v=1,c=65,r=1' '{"S":{"n":"flex","s":{"justify-content":"start","align-items":"center","width":"100%","height":"100%","background":"#0a1e24"},"c":[{"n":"text","t":"STATUS PASS  STATUS WARN  STATUS FAIL  STATUS BLOCKED","s":{"font-size":32,"font-weight":"bold","color":"#ecefc1"}}]}}'
 echo
 echo
 

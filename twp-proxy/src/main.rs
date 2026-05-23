@@ -1,6 +1,8 @@
 mod cache;
+mod expand;
 mod kitty;
 mod parser;
+mod protocol;
 mod render;
 
 use std::env;
@@ -14,34 +16,96 @@ use nix::sys::signal::{SigSet, Signal};
 use nix::sys::termios::{self, SetArg, Termios};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
-// Cell dimensions of the rendered widget block. The two hello-world widgets
-// are wide-and-short (progress bar, traffic light), so we use a 20×4 box —
-// roughly 2.5:1 in typical terminal cell aspect.
-const WIDGET_COLS: u32 = 20;
-const WIDGET_ROWS: u32 = 4;
+// Default cell footprint when the payload header omits c=COLS,ROWS.
+// Most Phase 1 widgets are wide-and-short.
+const DEFAULT_COLS: u32 = 20;
+const DEFAULT_ROWS: u32 = 4;
 
 fn handle_twp(cache: &mut cache::Cache, payload: &[u8], out: &mut Vec<u8>) {
-    let image_id = cache::image_id_for(payload);
+    let parsed = match parse_twp_payload(payload) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("twp-proxy: bad payload: {e}");
+            return;
+        }
+    };
+
+    let image_id = cache::image_id_for(&parsed.json_bytes);
     if cache.mark_transmitted(image_id) {
-        let png = match payload {
-            b"foo" => render::render_progress_bar(),
-            b"bar" => render::render_traffic_light(),
-            other => {
-                eprintln!(
-                    "twp-proxy: unknown payload `{}`; ignoring",
-                    String::from_utf8_lossy(other)
-                );
+        let value: protocol::Payload = match serde_json::from_slice(&parsed.json_bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("twp-proxy: JSON parse error: {e}");
                 return;
             }
         };
+        let Some(scene) = value.scene else {
+            // Defs-only payload: registration is a no-op in this implementation
+            // because templates are resolved per-payload (Phase 1 spec allows
+            // either approach).
+            return;
+        };
+        let expanded = expand::expand(scene, &value.defs);
+        let png = render::render_to_png(&expanded);
         out.extend_from_slice(&kitty::transmit_image(
             image_id,
             &png,
-            WIDGET_COLS,
-            WIDGET_ROWS,
+            parsed.cols,
+            parsed.rows,
         ));
     }
-    out.extend_from_slice(&kitty::placeholder_cells(image_id, WIDGET_COLS, WIDGET_ROWS));
+    out.extend_from_slice(&kitty::placeholder_cells(image_id, parsed.cols, parsed.rows));
+}
+
+struct ParsedTwp<'a> {
+    cols: u32,
+    rows: u32,
+    json_bytes: &'a [u8],
+}
+
+/// Splits a `twp;` APC payload into a single comma-separated header section
+/// and a JSON body, divided by the first `;`.
+///
+/// Header keys recognized in Phase 1:
+///   * `v=1` — protocol version (required by spec but tolerated when missing)
+///   * `c=N` — cell columns
+///   * `r=N` — cell rows
+/// Unknown keys are reserved for future versions and silently ignored.
+fn parse_twp_payload(payload: &[u8]) -> Result<ParsedTwp<'_>, String> {
+    let mut cols = DEFAULT_COLS;
+    let mut rows = DEFAULT_ROWS;
+
+    let (header_bytes, body_bytes) = match payload.iter().position(|&b| b == b';') {
+        Some(idx) => (&payload[..idx], &payload[idx + 1..]),
+        None => (&[][..], payload),
+    };
+
+    let header = std::str::from_utf8(header_bytes).map_err(|_| "non-UTF8 header".to_string())?;
+    for kv in header.split(',') {
+        let kv = kv.trim();
+        if kv.is_empty() {
+            continue;
+        }
+        let (k, v) = kv
+            .split_once('=')
+            .ok_or_else(|| format!("header pair missing `=`: `{kv}`"))?;
+        match k {
+            "v" => {
+                if v != "1" {
+                    return Err(format!("unsupported protocol version: {v}"));
+                }
+            }
+            "c" => cols = v.parse().map_err(|e| format!("bad c=`{v}`: {e}"))?,
+            "r" => rows = v.parse().map_err(|e| format!("bad r=`{v}`: {e}"))?,
+            _ => {} // reserved
+        }
+    }
+
+    Ok(ParsedTwp {
+        cols,
+        rows,
+        json_bytes: body_bytes,
+    })
 }
 
 fn current_winsize() -> libc::winsize {

@@ -9,30 +9,33 @@
 --   3. From Neovim's command line:
 --        :luafile %
 --
--- You should see a progress bar and a traffic light flash onto the screen.
--- Neovim is paused on getchar() so the widgets stay visible. Press any key
--- to continue — Neovim will redraw and paint over them.
---
 -- The trick: vim.uv.fs_write(1, ...) writes raw bytes to fd 1 (the tty),
 -- bypassing Neovim's own renderer. Those bytes go up the PTY chain into
--- twp-proxy's APC filter, which turns each `twp;` payload into a Kitty
--- Graphics transmit + Unicode placeholder block.
+-- twp-proxy's APC filter, which renders the widget tree and emits Kitty
+-- Graphics. Neovim is paused on getchar() so the widgets stay visible.
+-- Press any key to let Neovim redraw.
 
-local function emit(payload)
-  local apc = "\27_twp;" .. payload .. "\27\\"
+local function emit(json)
+  local apc = "\27_twp;v=1,c=20,r=4;" .. json .. "\27\\"
   vim.uv.fs_write(1, apc)
 end
 
--- Force the cursor to a fresh line so the widgets land somewhere visible.
 vim.uv.fs_write(1, "\r\n")
 
-emit("foo")
-vim.uv.fs_write(1, "  ")
-emit("bar")
+emit([[{"S":{"n":"box","s":{"display":"flex","justify-content":"center","align-items":"center","width":400,"height":160,"background":"#1e293b","border-radius":24},"c":[{"n":"text","t":"Hello from Neovim!","s":{"font-size":32,"color":"#ffffff","font-weight":"bold"}}]}}]])
+
+vim.uv.fs_write(1, "\r\n")
+
+emit([[{"S":{"n":"box","s":{"display":"flex","flex-direction":"row","justify-content":"space-around","align-items":"center","width":400,"height":160,"background":"#2a2d3a","border-radius":40},"c":[
+  {"n":"box","s":{"width":100,"height":100,"background":"#f04646","border-radius":"50%"}},
+  {"n":"box","s":{"width":100,"height":100,"background":"#fac83c","border-radius":"50%"}},
+  {"n":"box","s":{"width":100,"height":100,"background":"#50dc6e","border-radius":"50%"}}
+]}}]])
+
 vim.uv.fs_write(1, "\r\n")
 
 vim.notify(
-  "twp widgets emitted. If you can see them, the pipeline works. "
+  "TWP widgets emitted. If you can see them, the pipeline works. "
     .. "Press any key to let Neovim redraw."
 )
 vim.fn.getchar()

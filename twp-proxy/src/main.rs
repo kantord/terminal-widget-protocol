@@ -173,10 +173,6 @@ fn run() -> io::Result<i32> {
         let px_col = ws.ws_xpixel as u32 / ws.ws_col as u32;
         let px_row = ws.ws_ypixel as u32 / ws.ws_row as u32;
         render::set_cell_pixels(px_col, px_row);
-        eprintln!(
-            "twp-proxy: cell pixels {px_col}×{px_row} (from {}×{} px / {}×{} cells)",
-            ws.ws_xpixel, ws.ws_ypixel, ws.ws_col, ws.ws_row
-        );
     }
 
     let pair = pty_system

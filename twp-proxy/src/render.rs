@@ -254,10 +254,12 @@ fn load_variant(
                 (false, true) => "italic",
                 (true, true) => "bold-italic",
             };
-            eprintln!(
-                "twp-proxy: loaded {variant} font {} (family={family_name})",
-                path.display(),
-            );
+            if std::env::var("TWP_DEBUG").is_ok() {
+                eprintln!(
+                    "twp-proxy: loaded {variant} font {} (family={family_name})",
+                    path.display(),
+                );
+            }
         }
         Err(e) => eprintln!(
             "twp-proxy: failed to load {}: {e:?}",

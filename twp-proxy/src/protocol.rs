@@ -73,8 +73,7 @@ impl PropValue {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
 pub struct Style {
-    // Layout
-    pub display: Option<String>,
+    // Layout (only meaningful on `flex` containers)
     #[serde(rename = "flex-direction")]
     pub flex_direction: Option<String>,
     #[serde(rename = "justify-content")]

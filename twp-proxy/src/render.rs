@@ -24,10 +24,11 @@ use takumi::{
 
 use crate::protocol::{Border, Dimension, FontWeight, Node};
 
-/// Render viewport. 5:2 aspect matches a 20×4 cell footprint at typical
-/// terminal cell aspect (~1:2 W:H).
-pub const IMG_W: u32 = 400;
-pub const IMG_H: u32 = 160;
+/// Render resolution per cell. Pick values that give crisp rasterization
+/// while still letting Kitty scale the final image to the host terminal's
+/// actual cell box. Cell aspect ~1:2 W:H matches typical mono fonts.
+pub const PX_PER_COL: u32 = 20;
+pub const PX_PER_ROW: u32 = 40;
 
 /// First system font path that exists wins. Best-effort; if none are
 /// found, text nodes render as empty space. Phase 2 will let the
@@ -65,10 +66,12 @@ fn context() -> &'static GlobalContext {
     })
 }
 
-pub fn render_to_png(scene: &Node) -> Vec<u8> {
+pub fn render_to_png(scene: &Node, cols: u32, rows: u32) -> Vec<u8> {
+    let img_w = (cols.max(1)) * PX_PER_COL;
+    let img_h = (rows.max(1)) * PX_PER_ROW;
     let takumi_root = to_takumi(scene);
     let opts = RenderOptions::builder()
-        .viewport(Viewport::new((IMG_W, IMG_H)))
+        .viewport(Viewport::new((img_w, img_h)))
         .node(takumi_root)
         .global(context())
         .build();
@@ -86,7 +89,9 @@ fn to_takumi(node: &Node) -> TakumiNode {
             let text = node.t.as_deref().unwrap_or("");
             TakumiNode::text(text).with_style(style)
         }
-        // "box" or anything not text (including unfilled-component placeholders).
+        // "flex", "box", or anything not text (including unfilled-component
+        // placeholders). Layout differences are encoded via the `display`
+        // declaration applied in build_style.
         _ => {
             let children: Vec<TakumiNode> = node.c.iter().map(to_takumi).collect();
             TakumiNode::container(children).with_style(style)
@@ -94,16 +99,21 @@ fn to_takumi(node: &Node) -> TakumiNode {
     }
 }
 
+fn default_display_for(node_name: &str) -> Display {
+    match node_name {
+        "flex" => Display::Flex,
+        "box" => Display::Block,
+        _ => Display::Block, // unknown / placeholder
+    }
+}
+
 fn build_style(node: &Node) -> TkStyle {
     let s = &node.s;
     let mut style = TkStyle::default();
 
-    // Layout
-    let display = s
-        .display
-        .as_deref()
-        .map(parse_display)
-        .unwrap_or_else(|| if node.n == "box" { Display::Flex } else { Display::Inline });
+    // Layout — node name is the source of truth for the layout algorithm.
+    // `flex` always uses flex; `box` is a no-layout styled container.
+    let display = default_display_for(&node.n);
     style = style.with(StyleDeclaration::display(display));
 
     if let Some(fd) = s.flex_direction.as_deref().and_then(parse_flex_direction) {
@@ -248,16 +258,6 @@ fn parse_color(s: &str) -> Option<Color> {
     Some(Color::from([r, g, b, a]))
 }
 
-fn parse_display(s: &str) -> Display {
-    match s {
-        "flex" => Display::Flex,
-        "block" => Display::Block,
-        "inline" => Display::Inline,
-        "none" => Display::None,
-        _ => Display::Flex,
-    }
-}
-
 fn parse_flex_direction(s: &str) -> Option<FlexDirection> {
     Some(match s {
         "row" => FlexDirection::Row,
@@ -303,15 +303,19 @@ mod tests {
     use crate::protocol::Payload;
     use crate::expand::expand;
 
-    fn render_json(json: &str) -> Vec<u8> {
+    fn render_json(json: &str, cols: u32, rows: u32) -> Vec<u8> {
         let payload: Payload = serde_json::from_str(json).unwrap();
         let scene = expand(payload.scene.unwrap(), &payload.defs);
-        render_to_png(&scene)
+        render_to_png(&scene, cols, rows)
     }
 
     #[test]
     fn renders_minimal_box() {
-        let bytes = render_json(r##"{"S":{"n":"box","s":{"background":"#0a0","width":200,"height":100}}}"##);
+        let bytes = render_json(
+            r##"{"S":{"n":"box","s":{"background":"#0a0","width":200,"height":100}}}"##,
+            20,
+            4,
+        );
         assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
     }
 
@@ -319,7 +323,7 @@ mod tests {
     fn renders_traffic_light_via_components() {
         let bytes = render_json(
             r##"{
-                "S": {"n":"box","s":{"display":"flex","flex-direction":"row","justify-content":"space-around","align-items":"center","background":"#2a2d3a","width":400,"height":160,"border-radius":40},
+                "S": {"n":"flex","s":{"flex-direction":"row","justify-content":"space-around","align-items":"center","background":"#2a2d3a","width":400,"height":160,"border-radius":40},
                       "c":[
                         {"n":"$dot","props":{"col":{"n":"box","s":{"width":80,"height":80,"background":"#f04646","border-radius":"50%"}}}},
                         {"n":"$dot","props":{"col":{"n":"box","s":{"width":80,"height":80,"background":"#fac83c","border-radius":"50%"}}}},
@@ -327,6 +331,8 @@ mod tests {
                       ]},
                 "C": { "dot": {"n":"$param","name":"col"} }
             }"##,
+            20,
+            4,
         );
         assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
     }

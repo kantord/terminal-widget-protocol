@@ -46,13 +46,15 @@ bitmap pipeline).
 
 ### 1. Wire framing
 
-Each widget is one APC sequence:
+Each widget is one APC sequence [5]:
 
 ```
 ESC _ twp ; <key=val>[,<key=val>]* ; <json-payload> ESC \
 ```
 
-A single comma-separated header section, then `;`, then the JSON body.
+A single comma-separated header section, then `;`, then the JSON body. The
+overall framing — APC envelope, header-then-payload, comma-separated key=val
+pairs — follows the same shape established by Kitty's Graphics Protocol [1].
 Phase 1 defines exactly three header keys:
 
 | key | meaning                                                     |
@@ -68,7 +70,12 @@ Phase 1 consumers. Senders that need behaviour beyond Phase 1 should
 bump `v` and the consumer can decide whether to render or skip.
 
 Both APC terminators are valid: `ESC \` (ST) and `BEL`. Implementations
-must accept both.
+must accept both, per ECMA-48 [5].
+
+The token `twp` is a reserved vendor identifier within the APC namespace;
+other widget protocols sharing the channel should pick different tokens.
+Same convention Kitty uses for `G` (graphics) [1] and `_kitty-` (remote
+control DCS) [4].
 
 ### 2. Payload structure
 
@@ -107,15 +114,23 @@ Every node is a JSON object:
 }
 ```
 
-Phase 1 defines two primitive node names:
+Phase 1 defines three primitive node names. The node name **is** the
+layout algorithm — there is no `display` property. This keeps the
+implementer's job legible: "Phase 1 = these three primitives, no more."
 
-- `"box"` — a container.
+- `"flex"` — a container that lays out its children using flexbox.
+  Takes the flex-related style properties (`flex-direction`,
+  `justify-content`, `align-items`, `gap`).
+- `"box"` — a styled rectangle with no layout algorithm. Useful for
+  visual leaves (filled shapes, divider lines, dots) and for cases
+  where you want only the visual container without flex semantics.
+  Children, if any, stack in block flow.
 - `"text"` — a text run. The string lives in the `t` field. Text is
   rendered in **the terminal's own font** — this is the headline
   difference between TWP and "just send a PNG."
 
 Any node name beginning with `$` is a **component invocation** (see
-§4).
+§4). Phase 2 will add `"grid"` as a fourth primitive.
 
 ### 4. Component model
 
@@ -165,16 +180,15 @@ Rules:
 Phase 1 styles are a small fixed set. Any property outside this list is
 ignored.
 
-**Layout** (apply to a `box` to lay out its children):
+**Layout** (apply to `flex` containers; ignored elsewhere):
 
 | property            | values                                                          |
 |---------------------|-----------------------------------------------------------------|
-| `display`           | `"flex"` (default for `box`)                                    |
 | `flex-direction`    | `"row"` \| `"column"`                                           |
 | `justify-content`   | `"start"` \| `"end"` \| `"center"` \| `"space-between"` \| `"space-around"` \| `"space-evenly"` |
 | `align-items`       | `"start"` \| `"end"` \| `"center"` \| `"stretch"`               |
 | `gap`               | number (px)                                                     |
-| `padding`           | number (px, applies to all sides)                               |
+| `padding`           | number (px, applies to all sides; valid on any container)       |
 
 **Sizing**:
 
@@ -210,6 +224,43 @@ images, custom fonts, animation, transforms, grid layout, absolute
 positioning, query/probe verbs, payload compression. A Phase 1 renderer
 may freely cache, memoize, or optimize, but none of that is wire-
 visible.
+
+## References
+
+The protocol borrows several established conventions by reference rather
+than reinventing them. Citations are non-normative — implementers don't
+need to read these to be compliant — but they document where each pattern
+comes from and what mental model to bring.
+
+[1] Kitty Graphics Protocol.
+    https://sw.kovidgoyal.net/kitty/graphics-protocol/
+    — APC envelope and `header;payload` shape (§1); Unicode placeholder
+    rendering used internally by this implementation.
+
+[2] Kitty Text Sizing Protocol.
+    https://sw.kovidgoyal.net/kitty/text-sizing-protocol/
+    — Cell-as-canonical-unit mental model; basis for the planned
+    `Ncol`/`Nrow` length grammar.
+
+[3] Kitty Desktop Notifications Protocol.
+    https://sw.kovidgoyal.net/kitty/desktop-notifications/
+    — Patterns for identifier-keyed updates and reverse-channel callbacks
+    being considered for later phases.
+
+[4] Kitty Miscellaneous Escape Codes.
+    https://sw.kovidgoyal.net/kitty/misc-protocol/
+    — Vendor-token reservation convention; env-var advertisement style
+    (`TERM_PROGRAM`, `KITTY_WINDOW_ID`) being considered for capability
+    detection.
+
+[5] ECMA-48 / ISO 6429 — Control Functions for Coded Character Sets.
+    https://www.ecma-international.org/publications-and-standards/standards/ecma-48/
+    — Authoritative definitions for APC, ST, BEL.
+
+[6] takumi — Rust rendering engine for component trees.
+    https://crates.io/crates/takumi
+    — Layout and rasterization library used by this reference
+    implementation. The protocol itself is renderer-agnostic.
 
 ## What's inside this crate
 

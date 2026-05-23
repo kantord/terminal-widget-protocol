@@ -46,7 +46,7 @@ fn handle_twp(cache: &mut cache::Cache, payload: &[u8], out: &mut Vec<u8>) {
             return;
         };
         let expanded = expand::expand(scene, &value.defs);
-        let png = render::render_to_png(&expanded);
+        let png = render::render_to_png(&expanded, parsed.cols, parsed.rows);
         out.extend_from_slice(&kitty::transmit_image(
             image_id,
             &png,

@@ -22,11 +22,11 @@ end
 
 vim.uv.fs_write(1, "\r\n")
 
-emit([[{"S":{"n":"box","s":{"display":"flex","justify-content":"center","align-items":"center","width":400,"height":160,"background":"#1e293b","border-radius":24},"c":[{"n":"text","t":"Hello from Neovim!","s":{"font-size":32,"color":"#ffffff","font-weight":"bold"}}]}}]])
+emit([[{"S":{"n":"flex","s":{"justify-content":"center","align-items":"center","width":"100%","height":"100%","background":"#1e293b","border-radius":24},"c":[{"n":"text","t":"Hello from Neovim!","s":{"font-size":32,"color":"#ffffff","font-weight":"bold"}}]}}]])
 
 vim.uv.fs_write(1, "\r\n")
 
-emit([[{"S":{"n":"box","s":{"display":"flex","flex-direction":"row","justify-content":"space-around","align-items":"center","width":400,"height":160,"background":"#2a2d3a","border-radius":40},"c":[
+emit([[{"S":{"n":"flex","s":{"flex-direction":"row","justify-content":"space-around","align-items":"center","width":"100%","height":"100%","background":"#2a2d3a","border-radius":40},"c":[
   {"n":"box","s":{"width":100,"height":100,"background":"#f04646","border-radius":"50%"}},
   {"n":"box","s":{"width":100,"height":100,"background":"#fac83c","border-radius":"50%"}},
   {"n":"box","s":{"width":100,"height":100,"background":"#50dc6e","border-radius":"50%"}}

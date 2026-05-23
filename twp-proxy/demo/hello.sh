@@ -46,7 +46,7 @@ echo
 echo "Mono text (cell-grid-aligned):"
 echo "   Native:  The quick brown fox jumps over the lazy dog."
 echo -n "   Widget:  "
-twp 'v=1,c=50,r=1' '{"S":{"n":"mono","t":"The quick brown fox jumps over the lazy dog.","s":{"font-size":32,"color":"#ecefc1","background":"#0a1e24"}}}'
+twp 'v=1,c=50,r=1' '{"S":{"n":"mono","t":"The quick brown fox jumps over the lazy dog.","s":{"color":"#ecefc1","background":"#0a1e24"}}}'
 echo
 echo
 

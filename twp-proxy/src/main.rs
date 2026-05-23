@@ -165,6 +165,20 @@ fn run() -> io::Result<i32> {
 
     let pty_system = native_pty_system();
     let ws = current_winsize();
+
+    // Derive per-cell pixel dimensions from the terminal's reported
+    // pixel size. Kitty populates ws_xpixel/ws_ypixel; terminals that
+    // don't will leave them 0 and render.rs falls back to defaults.
+    if ws.ws_col > 0 && ws.ws_row > 0 && ws.ws_xpixel > 0 && ws.ws_ypixel > 0 {
+        let px_col = ws.ws_xpixel as u32 / ws.ws_col as u32;
+        let px_row = ws.ws_ypixel as u32 / ws.ws_row as u32;
+        render::set_cell_pixels(px_col, px_row);
+        eprintln!(
+            "twp-proxy: cell pixels {px_col}×{px_row} (from {}×{} px / {}×{} cells)",
+            ws.ws_xpixel, ws.ws_ypixel, ws.ws_col, ws.ws_row
+        );
+    }
+
     let pair = pty_system
         .openpty(pty_size_from_winsize(&ws))
         .map_err(|e| io::Error::other(format!("openpty: {e}")))?;

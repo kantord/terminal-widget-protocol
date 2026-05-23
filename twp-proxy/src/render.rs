@@ -26,11 +26,27 @@ use takumi::{
 
 use crate::protocol::{Border, Dimension, FontWeight, Node};
 
-/// Render resolution per cell. Pick values that give crisp rasterization
-/// while still letting Kitty scale the final image to the host terminal's
-/// actual cell box. Cell aspect ~1:2 W:H matches typical mono fonts.
-pub const PX_PER_COL: u32 = 20;
-pub const PX_PER_ROW: u32 = 40;
+/// Fallback render resolution per cell when the terminal doesn't report
+/// pixel dimensions via TIOCGWINSZ.
+const DEFAULT_PX_PER_COL: u32 = 20;
+const DEFAULT_PX_PER_ROW: u32 = 40;
+
+/// Actual cell pixel dimensions, set once at startup from TIOCGWINSZ.
+/// If the terminal doesn't populate ws_xpixel/ws_ypixel, falls back to
+/// the defaults above.
+static CELL_PX: OnceLock<(u32, u32)> = OnceLock::new();
+
+pub fn set_cell_pixels(px_per_col: u32, px_per_row: u32) {
+    let _ = CELL_PX.set((px_per_col, px_per_row));
+}
+
+fn px_per_col() -> u32 {
+    CELL_PX.get().map(|c| c.0).unwrap_or(DEFAULT_PX_PER_COL)
+}
+
+fn px_per_row() -> u32 {
+    CELL_PX.get().map(|c| c.1).unwrap_or(DEFAULT_PX_PER_ROW)
+}
 
 /// Final-fallback font paths if every other discovery mechanism fails.
 const FONT_PROBE: &[&str] = &[
@@ -321,8 +337,8 @@ fn integer_pixel_letter_spacing(font_size_px: f32, weight: u16) -> f32 {
 }
 
 pub fn render_to_png(scene: &Node, cols: u32, rows: u32) -> Vec<u8> {
-    let img_w = (cols.max(1)) * PX_PER_COL;
-    let img_h = (rows.max(1)) * PX_PER_ROW;
+    let img_w = (cols.max(1)) * px_per_col();
+    let img_h = (rows.max(1)) * px_per_row();
     let takumi_root = to_takumi(scene);
     let opts = RenderOptions::builder()
         .viewport(Viewport::new((img_w, img_h)))
@@ -360,7 +376,11 @@ fn to_takumi(node: &Node) -> TakumiNode {
 fn build_mono(node: &Node) -> TakumiNode {
     let text = node.t.as_deref().unwrap_or("");
     let s = &node.s;
-    let font_size_px = s.font_size.unwrap_or(DEFAULT_FONT_SIZE_PX);
+    // Default font-size fills ~75% of the cell height (leaves room for
+    // descenders). Scales automatically with the host terminal's actual
+    // cell pixels — senders don't need to know the pixel size.
+    let default_mono_font = px_per_row() as f32 * 0.75;
+    let font_size_px = s.font_size.unwrap_or(default_mono_font);
     let weight: u16 = match &s.font_weight {
         Some(FontWeight::Name(n)) if n == "bold" => 700,
         Some(FontWeight::Number(n)) => *n,
@@ -370,7 +390,7 @@ fn build_mono(node: &Node) -> TakumiNode {
     let fg_color = s.color.as_deref().and_then(parse_color);
 
     // Build a flex row of single-character cells.
-    let cell_w = PX_PER_COL as f32;
+    let cell_w = px_per_col() as f32;
     let cells: Vec<TakumiNode> = text
         .chars()
         .map(|ch| {

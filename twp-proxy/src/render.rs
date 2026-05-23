@@ -15,9 +15,9 @@ use takumi::{
         Viewport,
         node::Node as TakumiNode,
         style::{
-            AlignItems, Color, ColorInput, Display, FlexDirection, FontSize, FontWeight as TkFW,
-            JustifyContent, Length, LengthDefaultsToZero, SpacePair, Style as TkStyle,
-            StyleDeclaration, TextAlign,
+            AlignItems, Color, ColorInput, Display, FlexDirection, FontFamily, FontSize,
+            FontWeight as TkFW, FromCss, JustifyContent, Length, LengthDefaultsToZero, SpacePair,
+            Style as TkStyle, StyleDeclaration, TextAlign,
         },
     },
     rendering::{ImageOutputFormat, RenderOptions, measure_layout, render, write_image},
@@ -43,51 +43,102 @@ const FONT_PROBE: &[&str] = &[
     "/System/Library/Fonts/Monaco.ttf",
 ];
 
-/// Best-effort font discovery, ordered most-specific to least:
-///   1. `TWP_FONT_PATH` env override.
-///   2. If we're running inside Kitty (detected via `KITTY_WINDOW_ID`),
-///      parse `~/.config/kitty/kitty.conf` for `font_family`, resolve via
-///      `fc-match` — this is the "match the user's terminal font" path.
-///   3. `fc-match monospace` — system default.
-///   4. Hardcoded `FONT_PROBE` paths.
-fn discover_font_path() -> Option<std::path::PathBuf> {
+/// A set of font files for the four standard text styles plus the
+/// canonical family name they all register under so parley/fontique sees
+/// them as one family with multiple variants.
+#[derive(Debug, Default)]
+struct FontSet {
+    family_name: String,
+    regular: Option<std::path::PathBuf>,
+    bold: Option<std::path::PathBuf>,
+    italic: Option<std::path::PathBuf>,
+    bold_italic: Option<std::path::PathBuf>,
+}
+
+/// Best-effort font discovery:
+///   1. `TWP_FONT_PATH` env override (regular only).
+///   2. Kitty config: regular + bold + italic + bold_italic.
+///   3. `fc-match monospace` for regular.
+///   4. `FONT_PROBE` paths.
+fn discover_fonts() -> FontSet {
     if let Ok(p) = std::env::var("TWP_FONT_PATH") {
-        return Some(std::path::PathBuf::from(p));
+        return FontSet {
+            family_name: "twp-default".to_string(),
+            regular: Some(std::path::PathBuf::from(p)),
+            ..FontSet::default()
+        };
     }
     if std::env::var("KITTY_WINDOW_ID").is_ok() {
-        if let Some(family) = read_kitty_font_family() {
-            if let Some(path) = fc_match(&family) {
-                return Some(path);
-            }
+        let kitty = read_kitty_fonts();
+        if let Some(reg) = kitty.regular.as_deref() {
+            return FontSet {
+                family_name: reg.to_string(),
+                regular: fc_match(reg),
+                bold: kitty.bold.as_deref().and_then(fc_match),
+                italic: kitty.italic.as_deref().and_then(fc_match),
+                bold_italic: kitty.bold_italic.as_deref().and_then(fc_match),
+            };
         }
     }
     if let Some(path) = fc_match("monospace") {
-        return Some(path);
+        return FontSet {
+            family_name: "monospace".to_string(),
+            regular: Some(path),
+            ..FontSet::default()
+        };
     }
     for p in FONT_PROBE {
         if std::path::Path::new(p).exists() {
-            return Some(std::path::PathBuf::from(p));
+            return FontSet {
+                family_name: "twp-fallback".to_string(),
+                regular: Some(std::path::PathBuf::from(p)),
+                ..FontSet::default()
+            };
         }
     }
-    None
+    FontSet::default()
 }
 
-fn read_kitty_font_family() -> Option<String> {
-    let cfg_dir = std::env::var("XDG_CONFIG_HOME")
+#[derive(Debug, Default)]
+struct KittyFonts {
+    regular: Option<String>,
+    bold: Option<String>,
+    italic: Option<String>,
+    bold_italic: Option<String>,
+}
+
+fn read_kitty_fonts() -> KittyFonts {
+    let mut fonts = KittyFonts::default();
+    let Some(cfg_dir) = std::env::var("XDG_CONFIG_HOME")
         .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/.config")))
-        .ok()?;
+        .ok()
+    else {
+        return fonts;
+    };
     let path = std::path::Path::new(&cfg_dir).join("kitty/kitty.conf");
-    let contents = std::fs::read_to_string(&path).ok()?;
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return fonts;
+    };
     for line in contents.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some(rest) = line.strip_prefix("font_family") {
-            return Some(extract_family(rest.trim()));
+        for key in ["font_family", "bold_font", "italic_font", "bold_italic_font"] {
+            if let Some(rest) = line.strip_prefix(key) {
+                let value = extract_family(rest.trim());
+                match key {
+                    "font_family" => fonts.regular = Some(value),
+                    "bold_font" => fonts.bold = Some(value),
+                    "italic_font" => fonts.italic = Some(value),
+                    "bold_italic_font" => fonts.bold_italic = Some(value),
+                    _ => {}
+                }
+                break;
+            }
         }
     }
-    None
+    fonts
 }
 
 /// Kitty supports both legacy (`font_family Inter`) and modern
@@ -118,30 +169,83 @@ fn fc_match(family: &str) -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(trimmed))
 }
 
+fn fonts() -> &'static FontSet {
+    static FS: OnceLock<FontSet> = OnceLock::new();
+    FS.get_or_init(discover_fonts)
+}
+
 fn context() -> &'static GlobalContext {
     static CTX: OnceLock<GlobalContext> = OnceLock::new();
     CTX.get_or_init(|| {
         let mut ctx = GlobalContext::default();
-        match discover_font_path() {
-            Some(path) => match std::fs::read(&path) {
-                Ok(bytes) => match ctx.font_context.load_and_store(FontResource::new(bytes)) {
-                    Ok(()) => {
-                        eprintln!("twp-proxy: loaded font {}", path.display());
-                    }
-                    Err(e) => eprintln!(
-                        "twp-proxy: failed to load font {}: {e:?}",
-                        path.display()
-                    ),
-                },
-                Err(e) => eprintln!("twp-proxy: failed to read {}: {e}", path.display()),
-            },
-            None => eprintln!(
+        let set = fonts();
+        if set.regular.is_none() {
+            eprintln!(
                 "twp-proxy: no font found via Kitty config, fc-match, or probe paths; \
                  text widgets will render empty"
-            ),
+            );
+            return ctx;
         }
+        // Load all four variants under the same family_name so parley
+        // picks the right file by weight/style instead of synthesizing.
+        load_variant(&mut ctx, set.regular.as_deref(), &set.family_name, false, false);
+        load_variant(&mut ctx, set.bold.as_deref(), &set.family_name, true, false);
+        load_variant(&mut ctx, set.italic.as_deref(), &set.family_name, false, true);
+        load_variant(
+            &mut ctx,
+            set.bold_italic.as_deref(),
+            &set.family_name,
+            true,
+            true,
+        );
         ctx
     })
+}
+
+fn load_variant(
+    ctx: &mut GlobalContext,
+    path: Option<&std::path::Path>,
+    family_name: &str,
+    bold: bool,
+    italic: bool,
+) {
+    let Some(path) = path else { return };
+    let Ok(bytes) = std::fs::read(path) else {
+        eprintln!("twp-proxy: failed to read {}", path.display());
+        return;
+    };
+    use parley::fontique::{FontInfoOverride, FontStyle, FontWeight as FqWeight};
+    let override_info = FontInfoOverride {
+        family_name: Some(family_name),
+        weight: Some(if bold { FqWeight::BOLD } else { FqWeight::NORMAL }),
+        style: Some(if italic {
+            FontStyle::Italic
+        } else {
+            FontStyle::Normal
+        }),
+        ..Default::default()
+    };
+    match ctx
+        .font_context
+        .load_and_store(FontResource::new(bytes).override_info(override_info))
+    {
+        Ok(()) => {
+            let variant = match (bold, italic) {
+                (false, false) => "regular",
+                (true, false) => "bold",
+                (false, true) => "italic",
+                (true, true) => "bold-italic",
+            };
+            eprintln!(
+                "twp-proxy: loaded {variant} font {} (family={family_name})",
+                path.display(),
+            );
+        }
+        Err(e) => eprintln!(
+            "twp-proxy: failed to load {}: {e:?}",
+            path.display()
+        ),
+    }
 }
 
 /// Default font-size in render-resolution pixels when a `text` node
@@ -332,11 +436,17 @@ fn build_style(node: &Node) -> TkStyle {
         style = style.with(StyleDeclaration::text_align(ta));
     }
 
-    // For text nodes: disable ligatures and add letter-spacing tuned to
-    // round per-glyph advance to the nearest integer pixel. Both are
-    // implementation magic — the protocol's `text` node just declares
-    // a string; how the rasterizer keeps it cell-aligned is our problem.
+    // For text nodes: pin font-family to our tagged family (so parley
+    // picks the right weight/style variant we registered), disable
+    // ligatures, and add letter-spacing tuned to round per-glyph advance
+    // to the nearest integer pixel. All implementation magic — the
+    // protocol's `text` node just declares a string; how the rasterizer
+    // keeps it cell-aligned + variant-correct is our problem.
     if node.n == "text" {
+        let family = &fonts().family_name;
+        if let Ok(ff) = FontFamily::from_str(&format!("\"{}\"", family.replace('"', "\\\""))) {
+            style = style.with(StyleDeclaration::font_family(ff));
+        }
         style = style.with(StyleDeclaration::font_feature_settings(disable_ligatures()));
         let spacing = integer_pixel_letter_spacing(font_size_px, weight);
         style = style.with(StyleDeclaration::letter_spacing(Length::Px(spacing)));

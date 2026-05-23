@@ -99,10 +99,65 @@ echo
 echo "   Below the line"
 echo
 
+# ─── 7. Text rendering parity — TWP text vs native terminal text ──────
+echo "7) Text parity: native echo vs TWP text node (same string)"
+echo "   --------------------------------------------------------"
+echo "   If our font discovery + size calibration is right, the two lines"
+echo "   below should look indistinguishable — same font family, same size."
+echo
+echo "   Native:  Hello, world! 0123456789"
+echo -n "   Widget:  "
+twp 'v=1,c=28,r=1' '{"S":{"n":"text","t":"Hello, world! 0123456789","s":{"font-size":32}}}'
+echo
+echo
+echo "   Native (bold):  STATUS: OK"
+echo -n "   Widget (bold):  "
+twp 'v=1,c=14,r=1' '{"S":{"n":"text","t":"STATUS: OK","s":{"font-size":32,"font-weight":"bold"}}}'
+echo
+echo
+
+# ─── 8. Flex vs printf space-padding ──────────────────────────────────
+echo "8) Flex justify-content vs equivalent printf with spaces"
+echo "   ------------------------------------------------------"
+echo "   Native rows use plain text spacing. Widget rows ask flex to do"
+echo "   the same job. Where the dots don't land in the same columns,"
+echo "   that's the sub-cell-offset issue the Phase 2 'snap' parameter"
+echo "   exists to solve."
+echo
+echo "   space-between (3 dots in 20 cells):"
+echo "   Native: *                                       *                                       *"
+echo -n "   Widget: "
+twp 'v=1,c=20,r=1' '{"S":{"n":"flex","s":{"flex-direction":"row","justify-content":"space-between","align-items":"center","width":"100%","height":"100%","background":"#0f172a"},"c":[
+  {"n":"box","s":{"width":12,"height":12,"background":"#ffffff","border-radius":"50%"}},
+  {"n":"box","s":{"width":12,"height":12,"background":"#ffffff","border-radius":"50%"}},
+  {"n":"box","s":{"width":12,"height":12,"background":"#ffffff","border-radius":"50%"}}
+]}}'
+echo
+echo
+echo "   space-around:"
+echo "   Native:        *                   *                   *"
+echo -n "   Widget: "
+twp 'v=1,c=20,r=1' '{"S":{"n":"flex","s":{"flex-direction":"row","justify-content":"space-around","align-items":"center","width":"100%","height":"100%","background":"#0f172a"},"c":[
+  {"n":"box","s":{"width":12,"height":12,"background":"#ffffff","border-radius":"50%"}},
+  {"n":"box","s":{"width":12,"height":12,"background":"#ffffff","border-radius":"50%"}},
+  {"n":"box","s":{"width":12,"height":12,"background":"#ffffff","border-radius":"50%"}}
+]}}'
+echo
+echo
+echo "   center (3 dots tightly grouped in middle):"
+echo "   Native:                  * * *"
+echo -n "   Widget: "
+twp 'v=1,c=20,r=1' '{"S":{"n":"flex","s":{"flex-direction":"row","justify-content":"center","align-items":"center","gap":8,"width":"100%","height":"100%","background":"#0f172a"},"c":[
+  {"n":"box","s":{"width":12,"height":12,"background":"#ffffff","border-radius":"50%"}},
+  {"n":"box","s":{"width":12,"height":12,"background":"#ffffff","border-radius":"50%"}},
+  {"n":"box","s":{"width":12,"height":12,"background":"#ffffff","border-radius":"50%"}}
+]}}'
+echo
+echo
+
 echo "==================================="
 echo "Notes:"
 echo "  · Widget boundaries always cell-align (handled by Unicode placeholders)."
-echo "  · Content inside widgets — centered text, space-around gaps — may show"
-echo "    sub-cell offsets. The Phase 2 'snap' parameter will fix that."
-echo "  · Text in widgets uses a bundled mono font, not the host terminal's font."
-echo "    Matching the terminal's font is a Phase 2 goal."
+echo "  · Sections 7-8 are the real test for font and layout parity. Where"
+echo "    you can see differences between native and widget rows, that's"
+echo "    where Phase 2 work (snap parameter, font-size calibration) will go."

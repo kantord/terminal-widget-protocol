@@ -148,10 +148,12 @@ fn restore_termios(original: &Termios) {
 }
 
 fn run() -> io::Result<i32> {
-    let shell = env::args()
-        .nth(1)
+    let mut args = env::args().skip(1);
+    let shell = args
+        .next()
         .or_else(|| env::var("SHELL").ok())
         .unwrap_or_else(|| "/bin/bash".to_string());
+    let extra_args: Vec<String> = args.collect();
 
     // Block SIGWINCH on the main thread; threads spawned below inherit the
     // blocked mask, and a dedicated watcher will synchronously sigwait() it.
@@ -167,7 +169,10 @@ fn run() -> io::Result<i32> {
         .openpty(pty_size_from_winsize(&ws))
         .map_err(|e| io::Error::other(format!("openpty: {e}")))?;
 
-    let cmd = CommandBuilder::new(&shell);
+    let mut cmd = CommandBuilder::new(&shell);
+    for arg in &extra_args {
+        cmd.arg(arg);
+    }
     let mut child = pair
         .slave
         .spawn_command(cmd)

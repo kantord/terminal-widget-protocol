@@ -30,9 +30,7 @@ use crate::protocol::{Border, Dimension, FontWeight, Node};
 pub const PX_PER_COL: u32 = 20;
 pub const PX_PER_ROW: u32 = 40;
 
-/// First system font path that exists wins. Best-effort; if none are
-/// found, text nodes render as empty space. Phase 2 will let the
-/// terminal supply its own font.
+/// Final-fallback font paths if every other discovery mechanism fails.
 const FONT_PROBE: &[&str] = &[
     "/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
     "/usr/share/fonts/adobe-source-code-pro/SourceCodePro-Regular.otf",
@@ -43,25 +41,103 @@ const FONT_PROBE: &[&str] = &[
     "/System/Library/Fonts/Monaco.ttf",
 ];
 
+/// Best-effort font discovery, ordered most-specific to least:
+///   1. `TWP_FONT_PATH` env override.
+///   2. If we're running inside Kitty (detected via `KITTY_WINDOW_ID`),
+///      parse `~/.config/kitty/kitty.conf` for `font_family`, resolve via
+///      `fc-match` — this is the "match the user's terminal font" path.
+///   3. `fc-match monospace` — system default.
+///   4. Hardcoded `FONT_PROBE` paths.
+fn discover_font_path() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("TWP_FONT_PATH") {
+        return Some(std::path::PathBuf::from(p));
+    }
+    if std::env::var("KITTY_WINDOW_ID").is_ok() {
+        if let Some(family) = read_kitty_font_family() {
+            if let Some(path) = fc_match(&family) {
+                return Some(path);
+            }
+        }
+    }
+    if let Some(path) = fc_match("monospace") {
+        return Some(path);
+    }
+    for p in FONT_PROBE {
+        if std::path::Path::new(p).exists() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    None
+}
+
+fn read_kitty_font_family() -> Option<String> {
+    let cfg_dir = std::env::var("XDG_CONFIG_HOME")
+        .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/.config")))
+        .ok()?;
+    let path = std::path::Path::new(&cfg_dir).join("kitty/kitty.conf");
+    let contents = std::fs::read_to_string(&path).ok()?;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("font_family") {
+            return Some(extract_family(rest.trim()));
+        }
+    }
+    None
+}
+
+/// Kitty supports both legacy (`font_family Inter`) and modern
+/// (`font_family family="Inter" features=...`) syntax. Handle both.
+fn extract_family(rest: &str) -> String {
+    if let Some(start) = rest.find("family=\"") {
+        let after = &rest[start + "family=\"".len()..];
+        if let Some(end) = after.find('"') {
+            return after[..end].to_string();
+        }
+    }
+    rest.to_string()
+}
+
+fn fc_match(family: &str) -> Option<std::path::PathBuf> {
+    let output = std::process::Command::new("fc-match")
+        .args(["-f", "%{file}", family])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8(output.stdout).ok()?;
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(std::path::PathBuf::from(trimmed))
+}
+
 fn context() -> &'static GlobalContext {
     static CTX: OnceLock<GlobalContext> = OnceLock::new();
     CTX.get_or_init(|| {
         let mut ctx = GlobalContext::default();
-        for path in FONT_PROBE {
-            if let Ok(bytes) = std::fs::read(path) {
-                if ctx
-                    .font_context
-                    .load_and_store(FontResource::new(bytes))
-                    .is_ok()
-                {
-                    return ctx;
-                }
-            }
+        match discover_font_path() {
+            Some(path) => match std::fs::read(&path) {
+                Ok(bytes) => match ctx.font_context.load_and_store(FontResource::new(bytes)) {
+                    Ok(()) => {
+                        eprintln!("twp-proxy: loaded font {}", path.display());
+                    }
+                    Err(e) => eprintln!(
+                        "twp-proxy: failed to load font {}: {e:?}",
+                        path.display()
+                    ),
+                },
+                Err(e) => eprintln!("twp-proxy: failed to read {}: {e}", path.display()),
+            },
+            None => eprintln!(
+                "twp-proxy: no font found via Kitty config, fc-match, or probe paths; \
+                 text widgets will render empty"
+            ),
         }
-        eprintln!(
-            "twp-proxy: no system font found; text widgets will render empty. \
-             Looked in: {FONT_PROBE:?}"
-        );
         ctx
     })
 }

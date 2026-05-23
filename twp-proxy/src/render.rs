@@ -376,11 +376,23 @@ fn to_takumi(node: &Node) -> TakumiNode {
 fn build_mono(node: &Node) -> TakumiNode {
     let text = node.t.as_deref().unwrap_or("");
     let s = &node.s;
-    // Default font-size fills ~75% of the cell height (leaves room for
-    // descenders). Scales automatically with the host terminal's actual
-    // cell pixels — senders don't need to know the pixel size.
-    let default_mono_font = px_per_row() as f32 * 0.75;
-    let font_size_px = s.font_size.unwrap_or(default_mono_font);
+
+    // Text-sizing parameters — mirrors Kitty's OSC 66 [2]:
+    //   scale (s): each char occupies scale×scale cells
+    //   char-width (w): override horizontal cell count per char
+    //   subscale-n/d: fractional glyph size within the cell block
+    let scale = s.scale.unwrap_or(1).max(1);
+    let char_w_cells = s.char_width.unwrap_or(scale); // w=0 → same as scale
+    let (sub_n, sub_d) = match (s.subscale_n, s.subscale_d) {
+        (Some(n), Some(d)) if d > 0 => (n.min(d) as f32, d as f32),
+        _ => (1.0, 1.0), // no subscale → full size
+    };
+
+    let base_font = px_per_row() as f32 * 0.75;
+    let font_size_px = s
+        .font_size
+        .unwrap_or(base_font * scale as f32 * sub_n / sub_d);
+
     let weight: u16 = match &s.font_weight {
         Some(FontWeight::Name(n)) if n == "bold" => 700,
         Some(FontWeight::Number(n)) => *n,
@@ -389,8 +401,10 @@ fn build_mono(node: &Node) -> TakumiNode {
     let family_key = if weight >= 700 { FAMILY_BOLD } else { FAMILY_REGULAR };
     let fg_color = s.color.as_deref().and_then(parse_color);
 
-    // Build a flex row of single-character cells.
-    let cell_w = px_per_col() as f32;
+    // Build a flex row of single-character cells. Each cell is
+    // char_w_cells × scale terminal cells.
+    let cell_w = px_per_col() as f32 * char_w_cells as f32;
+    let cell_h = px_per_row() as f32 * scale as f32;
     let cells: Vec<TakumiNode> = text
         .chars()
         .map(|ch| {
@@ -418,7 +432,7 @@ fn build_mono(node: &Node) -> TakumiNode {
                 .with(StyleDeclaration::justify_content(JustifyContent::Center))
                 .with(StyleDeclaration::align_items(AlignItems::Center))
                 .with(StyleDeclaration::width(Length::Px(cell_w)))
-                .with(StyleDeclaration::height(Length::Percentage(100.0)));
+                .with(StyleDeclaration::height(Length::Px(cell_h)));
             TakumiNode::container(vec![glyph]).with_style(cell_style)
         })
         .collect();

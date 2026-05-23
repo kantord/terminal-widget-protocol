@@ -101,6 +101,15 @@ pub struct Style {
     pub font_weight: Option<FontWeight>,
     #[serde(rename = "text-align")]
     pub text_align: Option<String>,
+
+    // Mono text sizing (mirrors Kitty text-sizing protocol [2])
+    pub scale: Option<u32>,
+    #[serde(rename = "char-width")]
+    pub char_width: Option<u32>,
+    #[serde(rename = "subscale-n")]
+    pub subscale_n: Option<u32>,
+    #[serde(rename = "subscale-d")]
+    pub subscale_d: Option<u32>,
 }
 
 /// A length, either pixels (numeric) or a percentage string like `"50%"`.

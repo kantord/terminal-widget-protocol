@@ -31,7 +31,7 @@ echo
 echo "2) Scale=2 (each char in a 2×2 cell block)"
 echo "   Kitty:"
 osc66 "s=2" "ABCDE"
-echo
+echo; echo  # extra newline to clear past row 1 of scaled text
 echo "   TWP:"
 twp 'v=1,c=10,r=2' '{"S":{"n":"mono","t":"ABCDE","s":{"scale":2,"color":"#ecefc1","background":"#0a1e24"}}}'
 echo
@@ -41,7 +41,7 @@ echo
 echo "3) Scale=3 (each char in a 3×3 cell block)"
 echo "   Kitty:"
 osc66 "s=3" "ABC"
-echo
+echo; echo; echo  # extra newlines to clear past rows 1-2 of scaled text
 echo "   TWP:"
 twp 'v=1,c=9,r=3' '{"S":{"n":"mono","t":"ABC","s":{"scale":3,"color":"#ecefc1","background":"#0a1e24"}}}'
 echo
@@ -75,7 +75,7 @@ echo
 echo "6) Scale=2 + subscale 1/2 (2×2 cell box, normal-size glyph)"
 echo "   Kitty:"
 osc66 "s=2:n=1:d=2" "ABCDE"
-echo
+echo; echo
 echo "   TWP:"
 twp 'v=1,c=10,r=2' '{"S":{"n":"mono","t":"ABCDE","s":{"scale":2,"subscale-n":1,"subscale-d":2,"color":"#ecefc1","background":"#0a1e24"}}}'
 echo
@@ -85,7 +85,7 @@ echo
 echo "7) Long string at scale=2 (tests accumulated alignment)"
 echo "   Kitty:"
 osc66 "s=2" "0123456789"
-echo
+echo; echo
 echo "   TWP:"
 twp 'v=1,c=20,r=2' '{"S":{"n":"mono","t":"0123456789","s":{"scale":2,"color":"#ecefc1","background":"#0a1e24"}}}'
 echo

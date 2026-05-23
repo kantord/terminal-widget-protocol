@@ -43,12 +43,17 @@ const FONT_PROBE: &[&str] = &[
     "/System/Library/Fonts/Monaco.ttf",
 ];
 
-/// A set of font files for the four standard text styles plus the
-/// canonical family name they all register under so parley/fontique sees
-/// them as one family with multiple variants.
+/// Unique family names per weight/style — we force parley to pick the
+/// exact file by never asking it to do weight-matching. Crude but
+/// guaranteed to match the terminal's font selection (which also has
+/// one explicit file per variant).
+const FAMILY_REGULAR: &str = "twp-r";
+const FAMILY_BOLD: &str = "twp-b";
+const FAMILY_ITALIC: &str = "twp-i";
+const FAMILY_BOLD_ITALIC: &str = "twp-bi";
+
 #[derive(Debug, Default)]
 struct FontSet {
-    family_name: String,
     regular: Option<std::path::PathBuf>,
     bold: Option<std::path::PathBuf>,
     italic: Option<std::path::PathBuf>,
@@ -63,17 +68,15 @@ struct FontSet {
 fn discover_fonts() -> FontSet {
     if let Ok(p) = std::env::var("TWP_FONT_PATH") {
         return FontSet {
-            family_name: "twp-default".to_string(),
             regular: Some(std::path::PathBuf::from(p)),
             ..FontSet::default()
         };
     }
     if std::env::var("KITTY_WINDOW_ID").is_ok() {
         let kitty = read_kitty_fonts();
-        if let Some(reg) = kitty.regular.as_deref() {
+        if kitty.regular.is_some() {
             return FontSet {
-                family_name: reg.to_string(),
-                regular: fc_match(reg),
+                regular: kitty.regular.as_deref().and_then(fc_match),
                 bold: kitty.bold.as_deref().and_then(fc_match),
                 italic: kitty.italic.as_deref().and_then(fc_match),
                 bold_italic: kitty.bold_italic.as_deref().and_then(fc_match),
@@ -82,7 +85,6 @@ fn discover_fonts() -> FontSet {
     }
     if let Some(path) = fc_match("monospace") {
         return FontSet {
-            family_name: "monospace".to_string(),
             regular: Some(path),
             ..FontSet::default()
         };
@@ -90,7 +92,6 @@ fn discover_fonts() -> FontSet {
     for p in FONT_PROBE {
         if std::path::Path::new(p).exists() {
             return FontSet {
-                family_name: "twp-fallback".to_string(),
                 regular: Some(std::path::PathBuf::from(p)),
                 ..FontSet::default()
             };
@@ -186,15 +187,16 @@ fn context() -> &'static GlobalContext {
             );
             return ctx;
         }
-        // Load all four variants under the same family_name so parley
-        // picks the right file by weight/style instead of synthesizing.
-        load_variant(&mut ctx, set.regular.as_deref(), &set.family_name, false, false);
-        load_variant(&mut ctx, set.bold.as_deref(), &set.family_name, true, false);
-        load_variant(&mut ctx, set.italic.as_deref(), &set.family_name, false, true);
+        // Each variant gets a unique family name — we select the right
+        // one explicitly in build_style rather than relying on parley's
+        // weight-matching (which doesn't reliably pick overridden variants).
+        load_variant(&mut ctx, set.regular.as_deref(), FAMILY_REGULAR, false, false);
+        load_variant(&mut ctx, set.bold.as_deref(), FAMILY_BOLD, true, false);
+        load_variant(&mut ctx, set.italic.as_deref(), FAMILY_ITALIC, false, true);
         load_variant(
             &mut ctx,
             set.bold_italic.as_deref(),
-            &set.family_name,
+            FAMILY_BOLD_ITALIC,
             true,
             true,
         );
@@ -267,15 +269,18 @@ fn natural_advance(font_size_px: f32, weight: u16) -> f32 {
     // Measure a long ASCII run; we want the inline text run's width so we
     // can divide by char count for per-glyph advance. Wrap the text in a
     // flex container so parley produces an inline run we can read.
-    let sample = "0123456789abcdefghijklmnopqrstuvwxyz";
-    let text_node = TakumiNode::text(sample).with_style(
-        TkStyle::default()
-            .with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
-                font_size_px,
-            ))))
-            .with(StyleDeclaration::font_weight(TkFW::from(weight as f32)))
-            .with(StyleDeclaration::font_feature_settings(disable_ligatures())),
-    );
+    let sample = "0123456789 abcdefghij klmnopqrstu vwxyz ABCDE";
+    let family_key = if weight >= 700 { FAMILY_BOLD } else { FAMILY_REGULAR };
+    let mut probe_style = TkStyle::default()
+        .with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
+            font_size_px,
+        ))))
+        .with(StyleDeclaration::font_weight(TkFW::from(weight as f32)))
+        .with(StyleDeclaration::font_feature_settings(disable_ligatures()));
+    if let Ok(ff) = FontFamily::from_str(&format!("\"{family_key}\"")) {
+        probe_style = probe_style.with(StyleDeclaration::font_family(ff));
+    }
+    let text_node = TakumiNode::text(sample).with_style(probe_style);
     let probe = TakumiNode::container(vec![text_node]).with_style(
         TkStyle::default().with(StyleDeclaration::display(Display::Flex)),
     );
@@ -436,15 +441,14 @@ fn build_style(node: &Node) -> TkStyle {
         style = style.with(StyleDeclaration::text_align(ta));
     }
 
-    // For text nodes: pin font-family to our tagged family (so parley
-    // picks the right weight/style variant we registered), disable
-    // ligatures, and add letter-spacing tuned to round per-glyph advance
-    // to the nearest integer pixel. All implementation magic — the
-    // protocol's `text` node just declares a string; how the rasterizer
-    // keeps it cell-aligned + variant-correct is our problem.
+    // For text nodes: explicitly select the right font file (by family
+    // name) based on weight, disable ligatures, and add letter-spacing
+    // tuned to round per-glyph advance to the nearest integer pixel.
+    // All implementation magic — the protocol's `text` node just
+    // declares a string; how the rasterizer does the rest is our problem.
     if node.n == "text" {
-        let family = &fonts().family_name;
-        if let Ok(ff) = FontFamily::from_str(&format!("\"{}\"", family.replace('"', "\\\""))) {
+        let family_key = if weight >= 700 { FAMILY_BOLD } else { FAMILY_REGULAR };
+        if let Ok(ff) = FontFamily::from_str(&format!("\"{family_key}\"")) {
             style = style.with(StyleDeclaration::font_family(ff));
         }
         style = style.with(StyleDeclaration::font_feature_settings(disable_ligatures()));

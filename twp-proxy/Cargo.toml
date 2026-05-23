@@ -21,6 +21,10 @@ base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# parley re-exported types (FontFeature, Tag) for disabling ligatures —
+# matches the version takumi 1.4 transitively depends on.
+parley = "0.9"
+
 # Signals (SIGWINCH) and termios
 nix = { version = "0.29", features = ["term", "signal", "fs"] }
 

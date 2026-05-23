@@ -5,8 +5,10 @@
 // API. Anything outside the documented vocabulary is silently dropped.
 
 use std::borrow::Cow;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
+use parley::{FontFeature, setting::Tag};
 use takumi::{
     GlobalContext,
     layout::{
@@ -18,7 +20,7 @@ use takumi::{
             StyleDeclaration, TextAlign,
         },
     },
-    rendering::{ImageOutputFormat, RenderOptions, render, write_image},
+    rendering::{ImageOutputFormat, RenderOptions, measure_layout, render, write_image},
     resources::font::FontResource,
 };
 
@@ -142,6 +144,73 @@ fn context() -> &'static GlobalContext {
     })
 }
 
+/// Default font-size in render-resolution pixels when a `text` node
+/// doesn't specify one. Tuned to be roughly cell-height; this is what
+/// glyphs in a "unstyled" text widget will render at.
+const DEFAULT_FONT_SIZE_PX: f32 = 32.0;
+
+/// Measured natural glyph advance for a (font-size px, weight) pair —
+/// what parley produces with default settings before we add any
+/// letter-spacing. Cached because each entry costs a layout pass.
+fn natural_advance(font_size_px: f32, weight: u16) -> f32 {
+    static CACHE: OnceLock<Mutex<HashMap<(u32, u16), f32>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (font_size_px.to_bits(), weight);
+    if let Some(&a) = cache.lock().unwrap().get(&key) {
+        return a;
+    }
+
+    // Measure a long ASCII run; we want the inline text run's width so we
+    // can divide by char count for per-glyph advance. Wrap the text in a
+    // flex container so parley produces an inline run we can read.
+    let sample = "0123456789abcdefghijklmnopqrstuvwxyz";
+    let text_node = TakumiNode::text(sample).with_style(
+        TkStyle::default()
+            .with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
+                font_size_px,
+            ))))
+            .with(StyleDeclaration::font_weight(TkFW::from(weight as f32)))
+            .with(StyleDeclaration::font_feature_settings(disable_ligatures())),
+    );
+    let probe = TakumiNode::container(vec![text_node]).with_style(
+        TkStyle::default().with(StyleDeclaration::display(Display::Flex)),
+    );
+    let opts = RenderOptions::builder()
+        .viewport(Viewport::new((4096u32, 256u32)))
+        .node(probe)
+        .global(context())
+        .build();
+    let measured = measure_layout(opts).expect("measure_layout");
+    // The flex container has no explicit width, so it shrinks to its
+    // single text child's natural width — exactly what we want.
+    let advance = measured.width / sample.chars().count() as f32;
+    cache.lock().unwrap().insert(key, advance);
+    advance
+}
+
+/// Build a font-feature-settings list that disables OpenType ligatures
+/// (`liga`, `clig`, `dlig`) and discretionary calt — Nerd Fonts and
+/// programming fonts often have these enabled, which can shift per-glyph
+/// advance widths and break our integer-pixel assumption.
+fn disable_ligatures() -> Box<[FontFeature]> {
+    Box::new([
+        FontFeature::new(Tag::new(b"liga"), 0),
+        FontFeature::new(Tag::new(b"clig"), 0),
+        FontFeature::new(Tag::new(b"dlig"), 0),
+        FontFeature::new(Tag::new(b"calt"), 0),
+    ])
+}
+
+/// Returns the `letter-spacing` value (in px at our render resolution)
+/// needed to coerce per-glyph advance to the nearest integer pixel.
+/// Without this, parley's fractional advances accumulate across long
+/// strings and the resulting glyphs drift away from the cell grid when
+/// Kitty downscales to the host cell box.
+fn integer_pixel_letter_spacing(font_size_px: f32, weight: u16) -> f32 {
+    let natural = natural_advance(font_size_px, weight);
+    natural.ceil() - natural
+}
+
 pub fn render_to_png(scene: &Node, cols: u32, rows: u32) -> Vec<u8> {
     let img_w = (cols.max(1)) * PX_PER_COL;
     let img_h = (rows.max(1)) * PX_PER_ROW;
@@ -244,20 +313,33 @@ fn build_style(node: &Node) -> TkStyle {
     }
 
     // Text
-    if let Some(fs) = s.font_size {
-        style = style.with(StyleDeclaration::font_size(FontSize::Length(Length::Px(fs))));
+    let font_size_px = s.font_size.unwrap_or(DEFAULT_FONT_SIZE_PX);
+    if s.font_size.is_some() || node.n == "text" {
+        style = style.with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
+            font_size_px,
+        ))));
     }
-    if let Some(fw) = &s.font_weight {
-        let n: f32 = match fw {
-            FontWeight::Name(n) if n == "bold" => 700.0,
-            FontWeight::Name(n) if n == "normal" => 400.0,
-            FontWeight::Name(_) => 400.0,
-            FontWeight::Number(n) => *n as f32,
-        };
-        style = style.with(StyleDeclaration::font_weight(TkFW::from(n)));
+    let weight: u16 = match &s.font_weight {
+        Some(FontWeight::Name(n)) if n == "bold" => 700,
+        Some(FontWeight::Name(_)) => 400,
+        Some(FontWeight::Number(n)) => *n,
+        None => 400,
+    };
+    if s.font_weight.is_some() {
+        style = style.with(StyleDeclaration::font_weight(TkFW::from(weight as f32)));
     }
     if let Some(ta) = s.text_align.as_deref().and_then(parse_text_align) {
         style = style.with(StyleDeclaration::text_align(ta));
+    }
+
+    // For text nodes: disable ligatures and add letter-spacing tuned to
+    // round per-glyph advance to the nearest integer pixel. Both are
+    // implementation magic — the protocol's `text` node just declares
+    // a string; how the rasterizer keeps it cell-aligned is our problem.
+    if node.n == "text" {
+        style = style.with(StyleDeclaration::font_feature_settings(disable_ligatures()));
+        let spacing = integer_pixel_letter_spacing(font_size_px, weight);
+        style = style.with(StyleDeclaration::letter_spacing(Length::Px(spacing)));
     }
 
     style

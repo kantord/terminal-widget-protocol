@@ -14,16 +14,18 @@ use nix::sys::signal::{SigSet, Signal};
 use nix::sys::termios::{self, SetArg, Termios};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
-// Cell dimensions of the rendered widget block. Hardcoded for hello-world.
+// Cell dimensions of the rendered widget block. The two hello-world widgets
+// are wide-and-short (progress bar, traffic light), so we use a 20×4 box —
+// roughly 2.5:1 in typical terminal cell aspect.
 const WIDGET_COLS: u32 = 20;
-const WIDGET_ROWS: u32 = 10;
+const WIDGET_ROWS: u32 = 4;
 
 fn handle_twp(cache: &mut cache::Cache, payload: &[u8], out: &mut Vec<u8>) {
     let image_id = cache::image_id_for(payload);
     if cache.mark_transmitted(image_id) {
         let png = match payload {
-            b"foo" => render::render_triangle(),
-            b"bar" => render::render_circle(),
+            b"foo" => render::render_progress_bar(),
+            b"bar" => render::render_traffic_light(),
             other => {
                 eprintln!(
                     "twp-proxy: unknown payload `{}`; ignoring",

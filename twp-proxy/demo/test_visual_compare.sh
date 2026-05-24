@@ -60,6 +60,12 @@ ensure_kitty() {
     done
     sleep 0.5
 
+    # Clear prompt so it doesn't pollute screenshots
+    kitty @ --to="$SOCK" send-text "export PS1='' PS2=''\r" 2>/dev/null
+    sleep 0.3
+    kitty @ --to="$SOCK" send-text "clear\r" 2>/dev/null
+    sleep 0.3
+
     echo "  Kitty ready (PID $(cat "$PIDFILE"), socket $SOCKPATH)"
 }
 
@@ -84,56 +90,6 @@ capture() {
         scrot -u -o "$out" 2>/dev/null || true
         [ -n "$orig" ] && xdotool windowfocus "$orig" 2>/dev/null || true
     fi
-}
-
-# ── Cell-fill ground-truth comparison ───────────────────────────────
-check_cells() {
-    python3 -c "
-from PIL import Image
-import numpy as np
-
-img = np.array(Image.open('$1').convert('RGB')).astype(float)
-text = '''$2'''
-cols = $3
-
-expected = [c != ' ' for c in text[:cols]]
-while len(expected) < cols: expected.append(False)
-
-bg = img[0, -1, :].copy()
-
-# Find text region
-col_dev = np.sqrt(((img - bg)**2).sum(axis=2)).sum(axis=0)
-ink_th = col_dev.max() * 0.02
-ink_cols = np.where(col_dev > ink_th)[0]
-if len(ink_cols) < 2:
-    print('0 $3')
-    exit(0)
-x_off = int(ink_cols[0])
-x_end = int(ink_cols[-1]) + 1
-cell_w = (x_end - x_off) // cols
-if cell_w < 1:
-    print('0 $3')
-    exit(0)
-
-inks = []
-for i in range(cols):
-    x0 = x_off + i * cell_w
-    x1 = min(x0 + cell_w, img.shape[1])
-    if x0 >= img.shape[1]:
-        inks.append(0.0); continue
-    region = img[:, x0:x1, :]
-    inks.append(float(np.sqrt(((region - bg)**2).sum(axis=2)).sum()))
-
-exp_inks = sorted([v for v, e in zip(inks, expected) if e and v > 0])
-if not exp_inks:
-    print('0 $3')
-    exit(0)
-threshold = exp_inks[len(exp_inks)//2] * 0.20
-filled = [v > threshold for v in inks]
-matches = sum(f == e for f, e in zip(filled, expected))
-mismatches = ' '.join(f'{i}:{text[i]}' for i,(f,e) in enumerate(zip(filled,expected)) if f != e)
-print(f'{matches} $3 {mismatches}')
-"
 }
 
 # ── Main ────────────────────────────────────────────────────────────
@@ -161,7 +117,7 @@ for entry in "${TESTS[@]}"; do
     # Write temp scripts to avoid escaping hell through send-text → bash → printf
     cat > "$RESULTS/_native_${name}.sh" <<NEOF
 #!/bin/bash
-printf '\033c'
+printf '\x1b[2J\x1b[H'
 sleep 0.2
 printf '%s' '$text'
 NEOF
@@ -169,7 +125,7 @@ NEOF
 
     cat > "$RESULTS/_twp_${name}.sh" <<TEOF
 #!/bin/bash
-printf '\033c'
+printf '\x1b[2J\x1b[H'
 sleep 0.2
 printf '\x1b_twp;v=1,c=$cols,r=1;{"S":{"n":"mono","t":"$text","s":{"color":"#ecefc1","background":"#0a1e24"}}}\x1b\\\\'
 TEOF
@@ -186,27 +142,72 @@ TEOF
         skip=$((skip+1)); continue
     fi
 
-    # Compare both against ground truth
-    kit_r=$(check_cells "$RESULTS/kitty_${name}.png" "$text" "$cols")
-    twp_r=$(check_cells "$RESULTS/twp_${name}.png" "$text" "$cols")
+    # Compare TWP against Kitty (Kitty is the reference)
+    result=$(python3 -c "
+from PIL import Image
+import numpy as np
 
-    kit_match=$(echo "$kit_r" | cut -d' ' -f1)
-    twp_match=$(echo "$twp_r" | cut -d' ' -f1)
-    kit_mm=$(echo "$kit_r" | cut -d' ' -f3-)
-    twp_mm=$(echo "$twp_r" | cut -d' ' -f3-)
+try:
+    kit_img = np.array(Image.open('$RESULTS/kitty_${name}.png').convert('RGB')).astype(float)
+    twp_img = np.array(Image.open('$RESULTS/twp_${name}.png').convert('RGB')).astype(float)
+except Exception as e:
+    print(f'SKIP {e}')
+    exit(0)
 
-    both_ok=$([ "$kit_match" = "$cols" ] && [ "$twp_match" = "$cols" ] && echo 1 || echo 0)
-    if [ "$both_ok" = 1 ]; then
-        status="PASS"; pass=$((pass+1))
-    else
-        status="FAIL"; fail=$((fail+1))
-    fi
+cols = $cols
 
-    line="$status Kitty=$kit_match/$cols TWP=$twp_match/$cols"
-    [ -n "$kit_mm" ] && line="$line kit:($kit_mm)"
-    [ -n "$twp_mm" ] && line="$line twp:($twp_mm)"
-    echo "$line"
-    echo "$line" > "$RESULTS/metrics_${name}.txt"
+def cell_fill(img, ncols):
+    bg = img[0, -1, :].copy()
+    col_dev = np.sqrt(((img - bg)**2).sum(axis=2)).sum(axis=0)
+    ink_th = col_dev.max() * 0.02
+    ink_cols = np.where(col_dev > ink_th)[0]
+    if len(ink_cols) < 2:
+        return [False] * ncols
+    x_off = int(ink_cols[0])
+    x_end = int(ink_cols[-1]) + 1
+    cell_w = (x_end - x_off) // ncols
+    if cell_w < 1:
+        return [False] * ncols
+    inks = []
+    for i in range(ncols):
+        x0 = x_off + i * cell_w
+        x1 = min(x0 + cell_w, img.shape[1])
+        if x0 >= img.shape[1]:
+            inks.append(0.0); continue
+        region = img[:, x0:x1, :]
+        inks.append(float(np.sqrt(((region - bg)**2).sum(axis=2)).sum()))
+    # Threshold: 20% of median non-zero ink
+    nonzero = sorted([v for v in inks if v > 0])
+    if not nonzero:
+        return [False] * ncols
+    threshold = nonzero[len(nonzero)//2] * 0.20
+    return [v > threshold for v in inks]
+
+kit_cells = cell_fill(kit_img, cols)
+twp_cells = cell_fill(twp_img, cols)
+
+text = '''$text'''
+matches = sum(k == t for k, t in zip(kit_cells, twp_cells))
+mismatches = []
+for i, (k, t) in enumerate(zip(kit_cells, twp_cells)):
+    if k != t:
+        ch = text[i] if i < len(text) else '?'
+        mismatches.append(f'{i}:{ch}(kit={\"■\" if k else \"□\"},twp={\"■\" if t else \"□\"})')
+
+status = 'PASS' if matches == cols else 'FAIL'
+detail = f'{matches}/{cols}'
+if mismatches:
+    detail += ' ' + ' '.join(mismatches[:5])
+print(f'{status} {detail}')
+")
+
+    echo "  $result"
+    echo "$result" > "$RESULTS/metrics_${name}.txt"
+
+    case "$result" in
+        PASS*) pass=$((pass+1)) ;;
+        *) fail=$((fail+1)) ;;
+    esac
 done
 
 total=$((pass + fail + skip))

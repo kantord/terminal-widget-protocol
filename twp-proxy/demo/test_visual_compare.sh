@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Automated visual comparison using REAL Kitty on the actual display.
+# Visual comparison: Kitty native text vs TWP mono, both in the same
+# Kitty terminal running twp-proxy. A single long-lived Kitty instance
+# is reused across test runs (PID file + remote-control socket).
 #
-# Both native text and TWP widgets go through the exact same Kitty
-# rendering pipeline — same GPU, same compositor, same pixel density.
-# The Kitty window is moved off-screen via xdotool so it doesn't
-# interfere with the user's i3 workspaces.
+# i3 rule `for_window [class="^twp-visual-test"] ...` sends the window
+# to workspace __twp_test on DP-3.
 #
-# Dependencies: kitty, xdotool, import (ImageMagick), python3 + Pillow + numpy
+# Dependencies: kitty, xdotool, scrot, python3 + Pillow + numpy
 set -e
 
 BINARY="$(pwd)/target/release/twp-proxy"
 RESULTS="/tmp/twp-visual-test"
-rm -rf "$RESULTS" && mkdir -p "$RESULTS"
+PIDFILE="/tmp/twp-test-kitty.pid"
+SOCKPATH="/tmp/twp-test-kitty.sock"
+SOCK="unix:$SOCKPATH"
+CLASS="twp-visual-test"
 
 FONT=$(grep "^font_family" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | sed 's/^font_family\s*//')
 FSIZE=$(grep "^font_size" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | sed 's/^font_size\s*//')
@@ -19,40 +22,24 @@ FSIZE=$(grep "^font_size" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | sed
 : "${FSIZE:=16}"
 WIN_W=600
 WIN_H=200
-# Position on the rotated left monitor (DP-3 at +0+0)
-WIN_X=100
-WIN_Y=100
-# Class prefix matches the i3 for_window rule:
-#   for_window [class="^twp-visual-test"] floating enable, move to scratchpad
-CLASS="twp-visual-test-$$"
 
-echo "TWP Visual Comparison Test (real display)"
-echo "=========================================="
-echo "Font: $FONT @ ${FSIZE}pt  Class: $CLASS"
-echo
+rm -rf "$RESULTS" && mkdir -p "$RESULTS"
 
-# ── Launch Kitty, move off-screen, screenshot, kill ──────────────────
-#   $1 = command to run inside Kitty
-#   $2 = output PNG path
-kitty_screenshot() {
-    local cmd="$1" out="$2"
+# ── Ensure the long-lived Kitty instance is running ──────────────────
+ensure_kitty() {
+    # Check if existing instance is alive
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo "  Reusing existing Kitty (PID $(cat "$PIDFILE"))"
+        return 0
+    fi
 
-    # Write the command to a temp script
-    local script="$RESULTS/_cmd_$$.sh"
-    cat > "$script" <<SEOF
-#!/bin/bash
-$cmd
-sleep 2
-SEOF
-    chmod +x "$script"
+    echo "  Launching new Kitty instance on DP-3..."
+    rm -f "$SOCKPATH"
 
-    # Launch Kitty on the real display with a unique window class
-    # i3 rules handle everything automatically:
-    #   assign → workspace __twp_test on DP-3
-    #   no_focus → doesn't steal cursor
-    #   floating enable → controlled geometry
     kitty --class="$CLASS" \
+          --listen-on="$SOCK" \
           --config=NONE \
+          --override="allow_remote_control=yes" \
           --override="font_family=$FONT" \
           --override="font_size=$FSIZE" \
           --override="background=#0a1e24" \
@@ -63,27 +50,40 @@ SEOF
           --override="window_padding_width=0" \
           --override="confirm_os_window_close=0" \
           --override="shell_integration=disabled" \
-          bash "$script" 2>/dev/null &
-    local KPID=$!
+          "$BINARY" bash 2>/dev/null &
+    echo $! > "$PIDFILE"
 
-    # Wait for window to appear on __twp_test workspace
-    sleep 0.5
-    local WID
-    for _ in 1 2 3 4 5; do
-        WID=$(xdotool search --class "$CLASS" 2>/dev/null | tail -1)
-        [ -n "$WID" ] && break
-        sleep 0.3
+    # Wait for socket
+    for _ in $(seq 1 20); do
+        [ -S "$SOCKPATH" ] && break
+        sleep 0.2
     done
+    sleep 0.5
 
-    if [ -n "$WID" ]; then
-        # Resize to exact geometry and wait for rendering
-        i3-msg "[id=$WID] resize set $WIN_W $WIN_H" > /dev/null 2>&1
-        sleep 1.5
-        import -window "$WID" "$out" 2>/dev/null || true
+    echo "  Kitty ready (PID $(cat "$PIDFILE"), socket $SOCKPATH)"
+}
+
+# ── Send a command to the Kitty instance and screenshot ──────────────
+#   $1 = bash command to run (text to printf)
+#   $2 = output PNG path
+capture() {
+    local cmd="$1" out="$2"
+    local orig
+    orig=$(xdotool getactivewindow 2>/dev/null || true)
+
+    # Reset terminal + run command in one shot to avoid stale content
+    kitty @ --to="$SOCK" send-text "printf '\\\\033c'; sleep 0.2; $cmd\r" 2>/dev/null
+    sleep 1.5
+
+    # Brief focus + scrot
+    local wid
+    wid=$(xdotool search --class "$CLASS" 2>/dev/null | tail -1)
+    if [ -n "$wid" ]; then
+        xdotool windowfocus --sync "$wid" 2>/dev/null || true
+        sleep 0.1
+        scrot -u -o "$out" 2>/dev/null || true
+        [ -n "$orig" ] && xdotool windowfocus "$orig" 2>/dev/null || true
     fi
-
-    kill "$KPID" 2>/dev/null; wait "$KPID" 2>/dev/null || true
-    rm -f "$script"
 }
 
 # ── Cell-fill ground-truth comparison ───────────────────────────────
@@ -136,29 +136,34 @@ print(f'{matches} $3 {mismatches}')
 "
 }
 
-# ── Test cases ──────────────────────────────────────────────────────
+# ── Main ────────────────────────────────────────────────────────────
+echo "TWP Visual Comparison Test"
+echo "=========================="
+echo "Font: $FONT @ ${FSIZE}pt"
+echo
+
+ensure_kitty
+
 declare -a TESTS=(
-    "letters|ABCDEFGHIJ|10|1"
-    "pangram|The quick brown fox|19|1"
-    "digits|0123456789012345|16|1"
-    "wide_M|MMMMMMMMMMMMMMMMMMMM|20|1"
-    "mixed|Hello world 12345|17|1"
+    "letters|ABCDEFGHIJ|10"
+    "pangram|The quick brown fox|19"
+    "digits|0123456789012345|16"
+    "wide_M|MMMMMMMMMMMMMMMMMMMM|20"
+    "mixed|Hello world 12345|17"
 )
 
 pass=0; fail=0; skip=0
 
 for entry in "${TESTS[@]}"; do
-    IFS='|' read -r name text cols rows <<< "$entry"
+    IFS='|' read -r name text cols <<< "$entry"
     echo -n "  $name: "
 
-    # Native Kitty text
-    kitty_screenshot "printf '%s' '$text'" "$RESULTS/kitty_${name}.png"
+    # Screenshot 1: native text (just printf, passes through twp-proxy untouched)
+    capture "printf '%s' '$text'" "$RESULTS/kitty_${name}.png"
 
-    # TWP through twp-proxy in Kitty (same window, same GPU)
+    # Screenshot 2: TWP mono widget
     twp_json="{\"S\":{\"n\":\"mono\",\"t\":\"$text\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}"
-    kitty_screenshot \
-        "$BINARY bash -c \"printf '\\\\x1b_twp;v=1,c=$cols,r=$rows;$twp_json\\\\x1b\\\\\\\\'; sleep 1\"" \
-        "$RESULTS/twp_${name}.png"
+    capture "printf '\\\\x1b_twp;v=1,c=$cols,r=1;$twp_json\\\\x1b\\\\\\\\'" "$RESULTS/twp_${name}.png"
 
     if [ ! -f "$RESULTS/kitty_${name}.png" ] || [ ! -f "$RESULTS/twp_${name}.png" ]; then
         echo "SKIP (screenshot failed)"
@@ -175,7 +180,6 @@ for entry in "${TESTS[@]}"; do
     twp_mm=$(echo "$twp_r" | cut -d' ' -f3-)
 
     both_ok=$([ "$kit_match" = "$cols" ] && [ "$twp_match" = "$cols" ] && echo 1 || echo 0)
-
     if [ "$both_ok" = 1 ]; then
         status="PASS"; pass=$((pass+1))
     else
@@ -183,8 +187,8 @@ for entry in "${TESTS[@]}"; do
     fi
 
     line="$status Kitty=$kit_match/$cols TWP=$twp_match/$cols"
-    [ -n "$kit_mm" ] && line="$line kit_mm=($kit_mm)"
-    [ -n "$twp_mm" ] && line="$line twp_mm=($twp_mm)"
+    [ -n "$kit_mm" ] && line="$line kit:($kit_mm)"
+    [ -n "$twp_mm" ] && line="$line twp:($twp_mm)"
     echo "$line"
     echo "$line" > "$RESULTS/metrics_${name}.txt"
 done
@@ -217,7 +221,7 @@ cat > "$REPORT" <<'HEADER'
 HEADER
 
 echo "<p class=\"meta\">Font: $FONT @ ${FSIZE}pt &middot; $(date)</p>" >> "$REPORT"
-echo "<p class=\"note\">Both screenshots taken through the same Kitty instance on the real display &mdash; same GPU, same compositor, same pixel density. Kitty native: plain <code>printf</code>. TWP: <code>twp-proxy</code> emitting a <code>mono</code> widget via Kitty Graphics.</p>" >> "$REPORT"
+echo "<p class=\"note\">Both screenshots taken from the same Kitty terminal running <code>twp-proxy</code>. Native text passes through the proxy unchanged; TWP widgets are intercepted and rendered via Kitty Graphics. Same window, same GPU, same pixel density.</p>" >> "$REPORT"
 
 echo "<div class=\"summary\">" >> "$REPORT"
 echo "<div class=\"badge pass-bg\">$pass passed</div>" >> "$REPORT"
@@ -226,19 +230,19 @@ echo "<div class=\"badge pass-bg\">$pass passed</div>" >> "$REPORT"
 echo "</div>" >> "$REPORT"
 
 for entry in "${TESTS[@]}"; do
-    IFS='|' read -r name text cols rows <<< "$entry"
+    IFS='|' read -r name text cols <<< "$entry"
     ml=$(cat "$RESULTS/metrics_${name}.txt" 2>/dev/null || echo "SKIP")
     sc="skip-bg"; case "$ml" in PASS*) sc="pass-bg";; FAIL*) sc="fail-bg";; esac
 
     cat >> "$REPORT" <<THTML
 <div class="test">
   <h2>$name <span class="status $sc">${ml%%\ *}</span></h2>
-  <p class="metrics">"$text" · ${cols}×${rows} cells</p>
+  <p class="metrics">"$text" · ${cols} cells</p>
   <p class="metrics">$ml</p>
   <div class="images">
 THTML
     for variant in kitty twp; do
-        [ "$variant" = "kitty" ] && label="Kitty native (printf)" || label="TWP (mono via Kitty Graphics)"
+        [ "$variant" = "kitty" ] && label="Native text (printf)" || label="TWP mono widget"
         f="$RESULTS/${variant}_${name}.png"
         echo "<div class=\"img-box\"><h3>$label</h3>" >> "$REPORT"
         if [ -f "$f" ]; then
@@ -253,6 +257,7 @@ done
 
 echo "</body></html>" >> "$REPORT"
 echo
-echo "=========================================="
+echo "=========================="
 echo "Results: $pass passed, $fail failed, $skip skipped (of $total)"
 echo "Report:  file://$RESULTS/report.html"
+echo "Kitty:   PID $(cat "$PIDFILE" 2>/dev/null) (kept alive for reuse)"

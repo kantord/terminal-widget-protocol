@@ -71,8 +71,8 @@ capture() {
     local orig
     orig=$(xdotool getactivewindow 2>/dev/null || true)
 
-    # Reset terminal + run command in one shot to avoid stale content
-    kitty @ --to="$SOCK" send-text "printf '\\\\033c'; sleep 0.2; $cmd\r" 2>/dev/null
+    # Run the script via send-text to bash
+    kitty @ --to="$SOCK" send-text "bash $cmd\r" 2>/dev/null
     sleep 1.5
 
     # Brief focus + scrot
@@ -158,12 +158,28 @@ for entry in "${TESTS[@]}"; do
     IFS='|' read -r name text cols <<< "$entry"
     echo -n "  $name: "
 
-    # Screenshot 1: native text (just printf, passes through twp-proxy untouched)
-    capture "printf '%s' '$text'" "$RESULTS/kitty_${name}.png"
+    # Write temp scripts to avoid escaping hell through send-text → bash → printf
+    cat > "$RESULTS/_native_${name}.sh" <<NEOF
+#!/bin/bash
+printf '\033c'
+sleep 0.2
+printf '%s' '$text'
+NEOF
+    chmod +x "$RESULTS/_native_${name}.sh"
 
-    # Screenshot 2: TWP mono widget
-    twp_json="{\"S\":{\"n\":\"mono\",\"t\":\"$text\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}"
-    capture "printf '\\\\x1b_twp;v=1,c=$cols,r=1;$twp_json\\\\x1b\\\\\\\\'" "$RESULTS/twp_${name}.png"
+    cat > "$RESULTS/_twp_${name}.sh" <<TEOF
+#!/bin/bash
+printf '\033c'
+sleep 0.2
+printf '\x1b_twp;v=1,c=$cols,r=1;{"S":{"n":"mono","t":"$text","s":{"color":"#ecefc1","background":"#0a1e24"}}}\x1b\\\\'
+TEOF
+    chmod +x "$RESULTS/_twp_${name}.sh"
+
+    # Screenshot 1: native text (passes through twp-proxy untouched)
+    capture "$RESULTS/_native_${name}.sh" "$RESULTS/kitty_${name}.png"
+
+    # Screenshot 2: TWP mono widget (proxy intercepts + renders via Kitty Graphics)
+    capture "$RESULTS/_twp_${name}.sh" "$RESULTS/twp_${name}.png"
 
     if [ ! -f "$RESULTS/kitty_${name}.png" ] || [ ! -f "$RESULTS/twp_${name}.png" ]; then
         echo "SKIP (screenshot failed)"

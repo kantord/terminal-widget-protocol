@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
-# Automated visual comparison: Kitty native text vs TWP mono rendering.
+# Automated visual comparison using REAL Kitty on the actual display.
 #
-# TWP images are extracted from our rendering pipeline (PNG).
-# Kitty images are screenshots from a headless Kitty (Xvfb).
-# (Kitty Graphics images can't be screenshotted on Xvfb — GPU textures
-# are invisible to the virtual framebuffer. So TWP uses extracted PNGs.)
+# Both native text and TWP widgets go through the exact same Kitty
+# rendering pipeline — same GPU, same compositor, same pixel density.
+# The Kitty window is moved off-screen via xdotool so it doesn't
+# interfere with the user's i3 workspaces.
 #
-# Both are compared per-cell against GROUND TRUTH (the input string):
-# cell i should have ink iff text[i] is not a space. If both renderers
-# match ground truth, they fill the same cells → layout equivalence.
-#
-# Dependencies: xvfb-run, kitty, import (ImageMagick), python3 + Pillow + numpy
+# Dependencies: kitty, xdotool, import (ImageMagick), python3 + Pillow + numpy
 set -e
 
 BINARY="$(pwd)/target/release/twp-proxy"
@@ -21,96 +17,104 @@ FONT=$(grep "^font_family" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | se
 FSIZE=$(grep "^font_size" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | sed 's/^font_size\s*//')
 : "${FONT:=monospace}"
 : "${FSIZE:=16}"
+WIN_W=600
+WIN_H=200
+# Position on the rotated left monitor (DP-3 at +0+0)
+WIN_X=100
+WIN_Y=100
+# Class prefix matches the i3 for_window rule:
+#   for_window [class="^twp-visual-test"] floating enable, move to scratchpad
+CLASS="twp-visual-test-$$"
 
-echo "TWP Visual Comparison Test"
-echo "=========================="
-echo "Font: $FONT @ ${FSIZE}pt"
+echo "TWP Visual Comparison Test (real display)"
+echo "=========================================="
+echo "Font: $FONT @ ${FSIZE}pt  Class: $CLASS"
 echo
 
-# ── Kitty screenshot on Xvfb ────────────────────────────────────────
-screenshot_kitty() {
-    local text="$1" out="$2"
-    timeout 10 xvfb-run -s "-screen 0 600x200x24" bash -c "
-        kitty --config=NONE \
-              --override=\"font_family=$FONT\" \
-              --override=\"font_size=$FSIZE\" \
-              --override=\"background=#0a1e24\" \
-              --override=\"foreground=#ecefc1\" \
-              --override=\"initial_window_width=600\" \
-              --override=\"initial_window_height=200\" \
-              --override=\"confirm_os_window_close=0\" \
-              --override=\"window_padding_width=0\" \
-              --override=\"shell_integration=disabled\" \
-              bash -c 'printf \"%s\" \"$text\"; sleep 2' &
-        sleep 2
-        import -window root '$out' 2>/dev/null
-        kill %1 2>/dev/null; wait 2>/dev/null
-    " 2>/dev/null
-}
+# ── Launch Kitty, move off-screen, screenshot, kill ──────────────────
+#   $1 = command to run inside Kitty
+#   $2 = output PNG path
+kitty_screenshot() {
+    local cmd="$1" out="$2"
 
-# ── TWP PNG extraction ──────────────────────────────────────────────
-render_twp() {
-    local text="$1" cols="$2" rows="$3" out="$4"
-    local script="$RESULTS/_emit.sh"
+    # Write the command to a temp script
+    local script="$RESULTS/_cmd_$$.sh"
     cat > "$script" <<SEOF
 #!/bin/bash
-printf '\x1b_twp;v=1,c=$cols,r=$rows;{"S":{"n":"mono","t":"$text","s":{"color":"#ecefc1","background":"#0a1e24"}}}\x1b\\\\'
-exit
+$cmd
+sleep 2
 SEOF
     chmod +x "$script"
-    KITTY_WINDOW_ID=fake "$BINARY" bash "$script" > "$RESULTS/_raw.bin" 2>/dev/null
-    python3 -c "
-import re, base64
-data = open('$RESULTS/_raw.bin', 'rb').read()
-pat = re.compile(rb'\x1b_G([^;]+);(.*?)\x1b\\\\', re.DOTALL)
-chunks = []
-for h, p in pat.findall(data):
-    kv = dict(x.split(b'=',1) for x in h.split(b',') if b'=' in x)
-    if b'i' in kv: chunks = [p]
-    else: chunks.append(p)
-    if kv.get(b'm') != b'1' and chunks:
-        open('$out','wb').write(base64.b64decode(b''.join(chunks)))
-        break
-"
+
+    # Launch Kitty on the real display with a unique window class
+    # i3 rules handle everything automatically:
+    #   assign → workspace __twp_test on DP-3
+    #   no_focus → doesn't steal cursor
+    #   floating enable → controlled geometry
+    kitty --class="$CLASS" \
+          --config=NONE \
+          --override="font_family=$FONT" \
+          --override="font_size=$FSIZE" \
+          --override="background=#0a1e24" \
+          --override="foreground=#ecefc1" \
+          --override="remember_window_size=no" \
+          --override="initial_window_width=$WIN_W" \
+          --override="initial_window_height=$WIN_H" \
+          --override="window_padding_width=0" \
+          --override="confirm_os_window_close=0" \
+          --override="shell_integration=disabled" \
+          bash "$script" 2>/dev/null &
+    local KPID=$!
+
+    # Wait for window to appear on __twp_test workspace
+    sleep 0.5
+    local WID
+    for _ in 1 2 3 4 5; do
+        WID=$(xdotool search --class "$CLASS" 2>/dev/null | tail -1)
+        [ -n "$WID" ] && break
+        sleep 0.3
+    done
+
+    if [ -n "$WID" ]; then
+        # Resize to exact geometry and wait for rendering
+        i3-msg "[id=$WID] resize set $WIN_W $WIN_H" > /dev/null 2>&1
+        sleep 1.5
+        import -window "$WID" "$out" 2>/dev/null || true
+    fi
+
+    kill "$KPID" 2>/dev/null; wait "$KPID" 2>/dev/null || true
+    rm -f "$script"
 }
 
 # ── Cell-fill ground-truth comparison ───────────────────────────────
 check_cells() {
-    local img_path="$1" cols="$2" text="$3" is_twp="$4"
     python3 -c "
 from PIL import Image
 import numpy as np
 
-img = np.array(Image.open('$img_path').convert('RGB')).astype(float)
-text = '''$text'''
-cols = $cols
-is_twp = $is_twp
+img = np.array(Image.open('$1').convert('RGB')).astype(float)
+text = '''$2'''
+cols = $3
 
 expected = [c != ' ' for c in text[:cols]]
 while len(expected) < cols: expected.append(False)
 
-# Background: sample from top-right corner
 bg = img[0, -1, :].copy()
 
-if is_twp:
-    cell_w = img.shape[1] // cols
-    x_off = 0
-else:
-    # Find text region in screenshot
-    col_dev = np.sqrt(((img - bg)**2).sum(axis=2)).sum(axis=0)
-    ink_th = col_dev.max() * 0.02
-    ink_cols = np.where(col_dev > ink_th)[0]
-    if len(ink_cols) < 2:
-        print('N/A 0')
-        exit(0)
-    x_off = int(ink_cols[0])
-    x_end = int(ink_cols[-1]) + 1
-    cell_w = (x_end - x_off) // cols
-    if cell_w < 1:
-        print('N/A 0')
-        exit(0)
+# Find text region
+col_dev = np.sqrt(((img - bg)**2).sum(axis=2)).sum(axis=0)
+ink_th = col_dev.max() * 0.02
+ink_cols = np.where(col_dev > ink_th)[0]
+if len(ink_cols) < 2:
+    print('0 $3')
+    exit(0)
+x_off = int(ink_cols[0])
+x_end = int(ink_cols[-1]) + 1
+cell_w = (x_end - x_off) // cols
+if cell_w < 1:
+    print('0 $3')
+    exit(0)
 
-# Measure ink per cell
 inks = []
 for i in range(cols):
     x0 = x_off + i * cell_w
@@ -120,16 +124,15 @@ for i in range(cols):
     region = img[:, x0:x1, :]
     inks.append(float(np.sqrt(((region - bg)**2).sum(axis=2)).sum()))
 
-# Threshold: 20% of median ink of expected-filled cells
 exp_inks = sorted([v for v, e in zip(inks, expected) if e and v > 0])
 if not exp_inks:
-    print('N/A 0')
+    print('0 $3')
     exit(0)
 threshold = exp_inks[len(exp_inks)//2] * 0.20
 filled = [v > threshold for v in inks]
 matches = sum(f == e for f, e in zip(filled, expected))
 mismatches = ' '.join(f'{i}:{text[i]}' for i,(f,e) in enumerate(zip(filled,expected)) if f != e)
-print(f'{matches} {cols} {mismatches}')
+print(f'{matches} $3 {mismatches}')
 "
 }
 
@@ -148,41 +151,40 @@ for entry in "${TESTS[@]}"; do
     IFS='|' read -r name text cols rows <<< "$entry"
     echo -n "  $name: "
 
-    render_twp "$text" "$cols" "$rows" "$RESULTS/twp_${name}.png"
-    screenshot_kitty "$text" "$RESULTS/kitty_${name}.png"
+    # Native Kitty text
+    kitty_screenshot "printf '%s' '$text'" "$RESULTS/kitty_${name}.png"
 
-    if [ ! -f "$RESULTS/twp_${name}.png" ]; then
-        echo "SKIP (no TWP PNG)"; skip=$((skip+1)); continue
+    # TWP through twp-proxy in Kitty (same window, same GPU)
+    twp_json="{\"S\":{\"n\":\"mono\",\"t\":\"$text\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}"
+    kitty_screenshot \
+        "$BINARY bash -c \"printf '\\\\x1b_twp;v=1,c=$cols,r=$rows;$twp_json\\\\x1b\\\\\\\\'; sleep 1\"" \
+        "$RESULTS/twp_${name}.png"
+
+    if [ ! -f "$RESULTS/kitty_${name}.png" ] || [ ! -f "$RESULTS/twp_${name}.png" ]; then
+        echo "SKIP (screenshot failed)"
+        skip=$((skip+1)); continue
     fi
-    if [ ! -f "$RESULTS/kitty_${name}.png" ]; then
-        echo "SKIP (no Kitty screenshot)"; skip=$((skip+1)); continue
-    fi
 
-    twp_result=$(check_cells "$RESULTS/twp_${name}.png" "$cols" "$text" "True")
-    kit_result=$(check_cells "$RESULTS/kitty_${name}.png" "$cols" "$text" "False")
+    # Compare both against ground truth
+    kit_r=$(check_cells "$RESULTS/kitty_${name}.png" "$text" "$cols")
+    twp_r=$(check_cells "$RESULTS/twp_${name}.png" "$text" "$cols")
 
-    twp_match=$(echo "$twp_result" | cut -d' ' -f1)
-    twp_total=$(echo "$twp_result" | cut -d' ' -f2)
-    twp_mm=$(echo "$twp_result" | cut -d' ' -f3-)
-    kit_match=$(echo "$kit_result" | cut -d' ' -f1)
-    kit_total=$(echo "$kit_result" | cut -d' ' -f2)
-    kit_mm=$(echo "$kit_result" | cut -d' ' -f3-)
+    kit_match=$(echo "$kit_r" | cut -d' ' -f1)
+    twp_match=$(echo "$twp_r" | cut -d' ' -f1)
+    kit_mm=$(echo "$kit_r" | cut -d' ' -f3-)
+    twp_mm=$(echo "$twp_r" | cut -d' ' -f3-)
 
-    twp_ok=$( [ "$twp_match" = "$twp_total" ] && echo 1 || echo 0 )
-    kit_ok=$( [ "$kit_match" = "$kit_total" ] && echo 1 || echo 0 )
+    both_ok=$([ "$kit_match" = "$cols" ] && [ "$twp_match" = "$cols" ] && echo 1 || echo 0)
 
-    if [ "$twp_ok" = 1 ] && [ "$kit_ok" = 1 ]; then
+    if [ "$both_ok" = 1 ]; then
         status="PASS"; pass=$((pass+1))
-    elif [ "$twp_ok" = 1 ]; then
-        status="PARTIAL"; pass=$((pass+1))
     else
         status="FAIL"; fail=$((fail+1))
     fi
 
-    line="$status TWP=$twp_match/$twp_total"
-    [ -n "$twp_mm" ] && line="$line ($twp_mm)"
-    line="$line Kitty=$kit_match/$kit_total"
-    [ -n "$kit_mm" ] && line="$line ($kit_mm)"
+    line="$status Kitty=$kit_match/$cols TWP=$twp_match/$cols"
+    [ -n "$kit_mm" ] && line="$line kit_mm=($kit_mm)"
+    [ -n "$twp_mm" ] && line="$line twp_mm=($twp_mm)"
     echo "$line"
     echo "$line" > "$RESULTS/metrics_${name}.txt"
 done
@@ -200,7 +202,7 @@ cat > "$REPORT" <<'HEADER'
   h1{margin-bottom:.5rem} .meta{color:#94a3b8;margin-bottom:2rem}
   .summary{display:flex;gap:1rem;margin-bottom:2rem}
   .badge{padding:.4rem 1rem;border-radius:8px;font-weight:bold;font-size:1.1rem}
-  .pass-bg{background:#16a34a} .fail-bg{background:#dc2626} .partial-bg{background:#ca8a04}
+  .pass-bg{background:#16a34a} .fail-bg{background:#dc2626} .skip-bg{background:#ca8a04}
   .test{background:#1e293b;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem}
   .test h2{margin-bottom:.75rem;font-size:1.1rem}
   .status{display:inline-block;padding:.2rem .6rem;border-radius:4px;font-size:.85rem;font-weight:bold;margin-left:.5rem}
@@ -209,24 +211,24 @@ cat > "$REPORT" <<'HEADER'
   .img-box{background:#0f172a;border-radius:8px;padding:.75rem}
   .img-box h3{font-size:.75rem;color:#64748b;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.05em}
   .img-box img{width:100%;image-rendering:pixelated;border:1px solid #334155;border-radius:4px}
-  .note{font-size:.8rem;color:#64748b;margin-top:.5rem;font-style:italic}
+  .note{font-size:.85rem;color:#64748b;margin-bottom:1.5rem;line-height:1.5}
 </style></head><body>
 <h1>TWP Visual Comparison Report</h1>
 HEADER
 
 echo "<p class=\"meta\">Font: $FONT @ ${FSIZE}pt &middot; $(date)</p>" >> "$REPORT"
+echo "<p class=\"note\">Both screenshots taken through the same Kitty instance on the real display &mdash; same GPU, same compositor, same pixel density. Kitty native: plain <code>printf</code>. TWP: <code>twp-proxy</code> emitting a <code>mono</code> widget via Kitty Graphics.</p>" >> "$REPORT"
+
 echo "<div class=\"summary\">" >> "$REPORT"
 echo "<div class=\"badge pass-bg\">$pass passed</div>" >> "$REPORT"
 [ "$fail" -gt 0 ] && echo "<div class=\"badge fail-bg\">$fail failed</div>" >> "$REPORT"
-[ "$skip" -gt 0 ] && echo "<div class=\"badge partial-bg\">$skip skipped</div>" >> "$REPORT"
+[ "$skip" -gt 0 ] && echo "<div class=\"badge skip-bg\">$skip skipped</div>" >> "$REPORT"
 echo "</div>" >> "$REPORT"
-
-echo "<p class=\"note\">TWP images are extracted PNGs from our renderer. Kitty images are screenshots from a headless Kitty on Xvfb. Both are compared per-cell against ground truth (the input string). Images are at different pixel densities (renderer-internal vs terminal display) — the metrics are what matter, not pixel-level visual matching.</p>" >> "$REPORT"
 
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r name text cols rows <<< "$entry"
     ml=$(cat "$RESULTS/metrics_${name}.txt" 2>/dev/null || echo "SKIP")
-    sc="partial-bg"; case "$ml" in PASS*) sc="pass-bg";; FAIL*) sc="fail-bg";; esac
+    sc="skip-bg"; case "$ml" in PASS*) sc="pass-bg";; FAIL*) sc="fail-bg";; esac
 
     cat >> "$REPORT" <<THTML
 <div class="test">
@@ -235,9 +237,8 @@ for entry in "${TESTS[@]}"; do
   <p class="metrics">$ml</p>
   <div class="images">
 THTML
-
-    for variant in twp kitty; do
-        [ "$variant" = "twp" ] && label="TWP (extracted PNG)" || label="Kitty (Xvfb screenshot)"
+    for variant in kitty twp; do
+        [ "$variant" = "kitty" ] && label="Kitty native (printf)" || label="TWP (mono via Kitty Graphics)"
         f="$RESULTS/${variant}_${name}.png"
         echo "<div class=\"img-box\"><h3>$label</h3>" >> "$REPORT"
         if [ -f "$f" ]; then
@@ -252,6 +253,6 @@ done
 
 echo "</body></html>" >> "$REPORT"
 echo
-echo "=========================="
+echo "=========================================="
 echo "Results: $pass passed, $fail failed, $skip skipped (of $total)"
 echo "Report:  file://$RESULTS/report.html"

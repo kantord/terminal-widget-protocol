@@ -50,6 +50,9 @@ ensure_kitty() {
           --override="window_padding_width=0" \
           --override="confirm_os_window_close=0" \
           --override="shell_integration=disabled" \
+          --override="cursor_blink_interval=0" \
+          --override="cursor_shape=block" \
+          --override="cursor_opacity=0" \
           "$BINARY" bash 2>/dev/null &
     echo $! > "$PIDFILE"
 
@@ -69,28 +72,6 @@ ensure_kitty() {
     echo "  Kitty ready (PID $(cat "$PIDFILE"), socket $SOCKPATH)"
 }
 
-# ── Send a command to the Kitty instance and screenshot ──────────────
-#   $1 = bash command to run (text to printf)
-#   $2 = output PNG path
-capture() {
-    local cmd="$1" out="$2"
-    local orig
-    orig=$(xdotool getactivewindow 2>/dev/null || true)
-
-    # Run the script via send-text to bash
-    kitty @ --to="$SOCK" send-text "bash $cmd\r" 2>/dev/null
-    sleep 1.5
-
-    # Brief focus + scrot
-    local wid
-    wid=$(xdotool search --class "$CLASS" 2>/dev/null | tail -1)
-    if [ -n "$wid" ]; then
-        xdotool windowfocus --sync "$wid" 2>/dev/null || true
-        sleep 0.1
-        scrot -u -o "$out" 2>/dev/null || true
-        [ -n "$orig" ] && xdotool windowfocus "$orig" 2>/dev/null || true
-    fi
-}
 
 # ── Main ────────────────────────────────────────────────────────────
 echo "TWP Visual Comparison Test"
@@ -114,28 +95,69 @@ for entry in "${TESTS[@]}"; do
     IFS='|' read -r name text cols <<< "$entry"
     echo -n "  $name: "
 
-    # Write temp scripts to avoid escaping hell through send-text → bash → printf
-    cat > "$RESULTS/_native_${name}.sh" <<NEOF
+    # Single script does both: native render → screenshot → TWP render → screenshot.
+    # This avoids timing issues between send-text and bash execution.
+    wid=""
+    wid=$(xdotool search --class "$CLASS" 2>/dev/null | tail -1)
+
+    cat > "$RESULTS/_test_${name}.sh" <<SEOF
 #!/bin/bash
-printf '\x1b[2J\x1b[H'
-sleep 0.2
+# --- Native ---
+printf '\x1b[?25l\x1b[2J\x1b[H'
+sleep 0.3
 printf '%s' '$text'
-NEOF
-    chmod +x "$RESULTS/_native_${name}.sh"
+sleep 1
+# Signal: touch a file so the outer script knows to screenshot
+touch $RESULTS/_ready_native_${name}
+sleep 2
 
-    cat > "$RESULTS/_twp_${name}.sh" <<TEOF
-#!/bin/bash
+# --- TWP ---
 printf '\x1b[2J\x1b[H'
-sleep 0.2
+sleep 0.3
 printf '\x1b_twp;v=1,c=$cols,r=1;{"S":{"n":"mono","t":"$text","s":{"color":"#ecefc1","background":"#0a1e24"}}}\x1b\\\\'
-TEOF
-    chmod +x "$RESULTS/_twp_${name}.sh"
+sleep 1
+touch $RESULTS/_ready_twp_${name}
+sleep 2
+SEOF
+    chmod +x "$RESULTS/_test_${name}.sh"
 
-    # Screenshot 1: native text (passes through twp-proxy untouched)
-    capture "$RESULTS/_native_${name}.sh" "$RESULTS/kitty_${name}.png"
+    # Clean signal files
+    rm -f "$RESULTS/_ready_native_${name}" "$RESULTS/_ready_twp_${name}"
 
-    # Screenshot 2: TWP mono widget (proxy intercepts + renders via Kitty Graphics)
-    capture "$RESULTS/_twp_${name}.sh" "$RESULTS/twp_${name}.png"
+    # Launch the test script
+    kitty @ --to="$SOCK" send-text "bash $RESULTS/_test_${name}.sh\r" 2>/dev/null
+
+    # Wait for native screenshot signal
+    for _ in $(seq 1 30); do
+        [ -f "$RESULTS/_ready_native_${name}" ] && break
+        sleep 0.2
+    done
+    sleep 0.3
+
+    # Screenshot native
+    orig=""
+    orig=$(xdotool getactivewindow 2>/dev/null || true)
+    [ -n "$wid" ] && xdotool windowfocus --sync "$wid" 2>/dev/null || true
+    sleep 0.1
+    scrot -u -o "$RESULTS/kitty_${name}.png" 2>/dev/null || true
+    [ -n "$orig" ] && xdotool windowfocus "$orig" 2>/dev/null || true
+
+    # Wait for TWP screenshot signal
+    for _ in $(seq 1 30); do
+        [ -f "$RESULTS/_ready_twp_${name}" ] && break
+        sleep 0.2
+    done
+    sleep 0.3
+
+    # Screenshot TWP
+    orig=$(xdotool getactivewindow 2>/dev/null || true)
+    [ -n "$wid" ] && xdotool windowfocus --sync "$wid" 2>/dev/null || true
+    sleep 0.1
+    scrot -u -o "$RESULTS/twp_${name}.png" 2>/dev/null || true
+    [ -n "$orig" ] && xdotool windowfocus "$orig" 2>/dev/null || true
+
+    # Wait for script to finish
+    sleep 2
 
     if [ ! -f "$RESULTS/kitty_${name}.png" ] || [ ! -f "$RESULTS/twp_${name}.png" ]; then
         echo "SKIP (screenshot failed)"
@@ -187,6 +209,21 @@ kit_cells = cell_fill(kit_img, cols)
 twp_cells = cell_fill(twp_img, cols)
 
 text = '''$text'''
+
+# Sanity: both images must have ink in at least half the non-space cells.
+# If either is blank, the test is invalid (screenshot or render failed).
+expected_filled = sum(1 for c in text[:cols] if c != ' ')
+kit_filled = sum(kit_cells)
+twp_filled = sum(twp_cells)
+min_ink = max(expected_filled // 2, 1)
+
+if kit_filled < min_ink:
+    print(f'FAIL kitty has no ink ({kit_filled}/{expected_filled} cells filled)')
+    exit(0)
+if twp_filled < min_ink:
+    print(f'FAIL twp has no ink ({twp_filled}/{expected_filled} cells filled)')
+    exit(0)
+
 matches = sum(k == t for k, t in zip(kit_cells, twp_cells))
 mismatches = []
 for i, (k, t) in enumerate(zip(kit_cells, twp_cells)):

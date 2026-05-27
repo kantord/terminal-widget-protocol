@@ -33,6 +33,14 @@ nix = { version = "0.29", features = ["term", "signal", "fs"] }
 # SosPmApcString state and are silently discarded. We implement a small
 # byte-level state machine for APC framing instead. See src/parser.rs.
 
+[[bin]]
+name = "twp-proxy"
+path = "src/main.rs"
+
+[[bin]]
+name = "twp-screenshot"
+path = "src/bin/screenshot.rs"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

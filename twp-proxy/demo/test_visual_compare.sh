@@ -4,14 +4,8 @@
 # Tests both basic text rendering and Kitty's text-sizing protocol (OSC 66)
 # parameters: scale, char-width, and subscale.
 #
-# Screenshotted from a headless Xvfb display via ImageMagick `import` —
-# same software renderer, same pixel density, same window.
-#
-# Uses Xvfb + llvmpipe (Mesa software OpenGL) so the test is fully
-# self-contained and doesn't touch your real desktop or window manager.
-#
-# A fresh Kitty instance is launched for each render to ensure clean
-# graphics state under software rendering.
+# Uses twp-screenshot (Rust) for rendering and Xvfb + llvmpipe for headless
+# display. Comparison and reporting remain in bash/python.
 #
 # Dependencies: kitty (≥0.35 for OSC 66), xvfb (xorg-server-xvfb),
 #               xdotool, imagemagick, python3 + Pillow + numpy,
@@ -19,20 +13,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BINARY="${SCRIPT_DIR}/../target/release/twp-proxy"
+PROXY="${SCRIPT_DIR}/../target/release/twp-proxy"
+SCREENSHOT="${SCRIPT_DIR}/../target/release/twp-screenshot"
 RESULTS="/tmp/twp-visual-test"
-CLASS="twp-visual-test"
 VDISPLAY=":55"
 
 FONT=$(grep "^font_family" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | sed 's/^font_family\s*//')
 FSIZE=$(grep "^font_size" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | sed 's/^font_size\s*//')
 : "${FONT:=monospace}"
 : "${FSIZE:=16}"
-
-export LIBGL_ALWAYS_SOFTWARE=1
-export GALLIUM_DRIVER=llvmpipe
-export KITTY_DISABLE_WAYLAND=1
-export DISPLAY="$VDISPLAY"
 
 rm -rf "$RESULTS" && mkdir -p "$RESULTS"
 
@@ -44,11 +33,11 @@ start_xvfb() {
     XVFB_PID=$!
 
     for _ in $(seq 1 50); do
-        xdpyinfo -display "$VDISPLAY" >/dev/null 2>&1 && break
+        DISPLAY="$VDISPLAY" xdpyinfo >/dev/null 2>&1 && break
         sleep 0.1
     done
 
-    if ! xdpyinfo -display "$VDISPLAY" >/dev/null 2>&1; then
+    if ! DISPLAY="$VDISPLAY" xdpyinfo >/dev/null 2>&1; then
         echo "ERROR: Xvfb failed to start" >&2
         cat /tmp/twp-xvfb.log >&2
         exit 1
@@ -62,81 +51,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── Run one render in a fresh Kitty instance ───────────────────────
-# Usage: run_render <script> <output_png> [use_proxy]
-# If use_proxy is "no", kitty runs bare bash (for OSC 66 native tests).
-run_render() {
-    local script="$1" output="$2" use_proxy="${3:-yes}"
-    local sig_file="$RESULTS/_render_sig_$$"
-    local kitty_pid shell_cmd
+# ── Screenshot helpers using twp-screenshot ────────────────────────
+ss_common=(--display "$VDISPLAY" --font "$FONT" --font-size "$FSIZE")
 
-    rm -f "$sig_file"
-
-    if [ "$use_proxy" = "yes" ]; then
-        shell_cmd=("$BINARY" bash)
-    else
-        shell_cmd=(bash)
-    fi
-
-    kitty --class="$CLASS" \
-          --config=NONE \
-          --override="allow_remote_control=yes" \
-          --override="font_family=$FONT" \
-          --override="font_size=$FSIZE" \
-          --override="background=#0a1e24" \
-          --override="foreground=#ecefc1" \
-          --override="remember_window_size=no" \
-          --override="initial_window_width=60c" \
-          --override="initial_window_height=10c" \
-          --override="confirm_os_window_close=0" \
-          --override="shell_integration=disabled" \
-          --override="window_padding_width=0" \
-          "${shell_cmd[@]}" -c "
-              printf '\x1b[?25l\x1b[2J\x1b[H'
-              sleep 0.3
-              $script
-              touch $sig_file
-              sleep 120
-          " 2>/dev/null &
-    kitty_pid=$!
-
-    for _ in $(seq 1 100); do [ -f "$sig_file" ] && break; sleep 0.2; done
-
-    local wid
-    for _ in $(seq 1 10); do
-        sleep 1
-        wid=$(xdotool search --class "$CLASS" 2>/dev/null | tail -1)
-        if [ -n "$wid" ]; then
-            import -window "$wid" "$output" 2>/dev/null
-            local size
-            size=$(stat -c%s "$output" 2>/dev/null || echo 0)
-            [ "$size" -gt 500 ] && break
-        fi
-    done
-
-    kill "$kitty_pid" 2>/dev/null || true
-    wait "$kitty_pid" 2>/dev/null || true
-    rm -f "$sig_file"
+ss_native() {
+    "$SCREENSHOT" "${ss_common[@]}" --output "$1" -- "$2"
 }
 
+ss_native_bare() {
+    "$SCREENSHOT" "${ss_common[@]}" --output "$1" -- "$2"
+}
 
-# ── Test runner ────────────────────────────────────────────────────
-# run_test <name> <text> <cols> <native_script> <twp_script> [native_proxy]
-# native_proxy: "yes" (default) runs native through proxy, "no" runs bare
-run_test() {
-    local name="$1" text="$2" cols="$3" native_script="$4" twp_script="$5"
-    local native_proxy="${6:-yes}"
+ss_twp() {
+    "$SCREENSHOT" "${ss_common[@]}" --proxy "$PROXY" --output "$1" -- "$2"
+}
 
-    echo -n "  $name: "
-
-    run_render "$native_script" "$RESULTS/kitty_${name}.png" "$native_proxy"
-    run_render "$twp_script" "$RESULTS/twp_${name}.png" "yes"
-
-    if [ ! -f "$RESULTS/kitty_${name}.png" ] || [ ! -f "$RESULTS/twp_${name}.png" ]; then
-        echo "SKIP (screenshot failed)"
-        return 2
-    fi
-
+# ── Compare helper ─────────────────────────────────────────────────
+compare() {
+    local name="$1" text="$2" cols="$3"
     python3 -c "
 from PIL import Image
 import numpy as np
@@ -190,12 +122,34 @@ status = 'PASS' if matches == cols else 'FAIL'
 detail = f'{matches}/{cols}'
 if mm: detail += ' mm=' + ','.join(mm[:5])
 print(f'{status} {detail}')
-" > "$RESULTS/metrics_${name}.txt"
+"
+}
+
+# ── Test runner ────────────────────────────────────────────────────
+# run_test <name> <text> <cols> <native_cmd> <twp_cmd> [native_use_proxy]
+run_test() {
+    local name="$1" text="$2" cols="$3" native_cmd="$4" twp_cmd="$5"
+    local native_proxy="${6:-yes}"
+
+    echo -n "  $name: "
+
+    if [ "$native_proxy" = "yes" ]; then
+        ss_twp "$RESULTS/kitty_${name}.png" "$native_cmd" || true
+    else
+        ss_native "$RESULTS/kitty_${name}.png" "$native_cmd" || true
+    fi
+    ss_twp "$RESULTS/twp_${name}.png" "$twp_cmd" || true
+
+    if [ ! -f "$RESULTS/kitty_${name}.png" ] || [ ! -f "$RESULTS/twp_${name}.png" ]; then
+        echo "SKIP (screenshot failed)"
+        echo "SKIP" > "$RESULTS/metrics_${name}.txt"
+        return 0
+    fi
 
     local result
-    result=$(cat "$RESULTS/metrics_${name}.txt")
+    result=$(compare "$name" "$text" "$cols")
     echo "$result"
-
+    echo "$result" > "$RESULTS/metrics_${name}.txt"
     return 0
 }
 
@@ -208,9 +162,7 @@ echo
 
 start_xvfb
 
-pass=0; fail=0; skip=0
 ALL_TESTS=()
-
 record() { ALL_TESTS+=("$1"); }
 
 # ── Basic mono tests (scale=1, native = plain printf) ──────────────
@@ -246,42 +198,36 @@ echo
 # ── Text-sizing tests (OSC 66 vs TWP mono sizing params) ───────────
 echo "── Text-sizing (OSC 66 vs TWP) ──"
 
-# scale=2: each char in a 2×2 cell block (5 chars → c=10, r=2)
 run_test "scale2" "ABCDE" 10 \
     "printf '\x1b]66;s=2;ABCDE\x07'" \
     "printf '\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
     "no"
 record scale2
 
-# scale=3: each char in a 3×3 cell block (3 chars → c=9, r=3)
 run_test "scale3" "ABC" 9 \
     "printf '\x1b]66;s=3;ABC\x07'" \
     "printf '\x1b_twp;v=1,c=9,r=3;{\"S\":{\"n\":\"mono\",\"t\":\"ABC\",\"s\":{\"scale\":3,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
     "no"
 record scale3
 
-# char-width=2: double-wide, single-height (5 chars → c=10, r=1)
 run_test "charw2" "ABCDE" 10 \
     "printf '\x1b]66;w=2;ABCDE\x07'" \
     "printf '\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"char-width\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
     "no"
 record charw2
 
-# subscale 1/2: half-size glyph in normal cell (10 chars → c=10, r=1)
 run_test "sub_half" "ABCDEFGHIJ" 10 \
     "printf '\x1b]66;n=1:d=2;ABCDEFGHIJ\x07'" \
     "printf '\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDEFGHIJ\",\"s\":{\"subscale-n\":1,\"subscale-d\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
     "no"
 record sub_half
 
-# scale=2 + subscale 1/2: 2×2 cell box, normal-size glyph (5 chars → c=10, r=2)
 run_test "scale2_sub_half" "ABCDE" 10 \
     "printf '\x1b]66;s=2:n=1:d=2;ABCDE\x07'" \
     "printf '\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"scale\":2,\"subscale-n\":1,\"subscale-d\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
     "no"
 record scale2_sub_half
 
-# scale=2 digits: accumulated alignment over a longer string (10 chars → c=20, r=2)
 run_test "scale2_digits" "0123456789" 20 \
     "printf '\x1b]66;s=2;0123456789\x07'" \
     "printf '\x1b_twp;v=1,c=20,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"0123456789\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
@@ -290,7 +236,8 @@ record scale2_digits
 
 echo
 
-# Count results from metrics files
+# Count results
+pass=0; fail=0; skip=0
 for name in "${ALL_TESTS[@]}"; do
     ml=$(cat "$RESULTS/metrics_${name}.txt" 2>/dev/null || echo "SKIP")
     case "$ml" in PASS*) pass=$((pass+1)) ;; SKIP*) skip=$((skip+1)) ;; *) fail=$((fail+1)) ;; esac
@@ -324,7 +271,7 @@ cat > "$REPORT" <<'HEADER'
 HEADER
 
 echo "<p class=\"meta\">Font: $FONT @ ${FSIZE}pt &middot; $(date)</p>" >> "$REPORT"
-echo "<p class=\"note\">Screenshots from Kitty running <code>twp-proxy</code> on a headless Xvfb display (llvmpipe software rendering). Captured via ImageMagick <code>import</code>. Basic tests compare native text vs TWP mono widget. Text-sizing tests compare Kitty OSC 66 output vs TWP mono with equivalent <code>scale</code>, <code>char-width</code>, and <code>subscale</code> parameters.</p>" >> "$REPORT"
+echo "<p class=\"note\">Screenshots from Kitty running <code>twp-proxy</code> on a headless Xvfb display (llvmpipe software rendering). Captured via <code>twp-screenshot</code>. Basic tests compare native text vs TWP mono widget. Text-sizing tests compare Kitty OSC 66 output vs TWP mono with equivalent <code>scale</code>, <code>char-width</code>, and <code>subscale</code> parameters.</p>" >> "$REPORT"
 
 echo "<div class=\"summary\">" >> "$REPORT"
 echo "<div class=\"badge pass-bg\">$pass passed</div>" >> "$REPORT"
@@ -334,7 +281,6 @@ echo "</div>" >> "$REPORT"
 
 section_printed=0
 for name in "${ALL_TESTS[@]}"; do
-    # Section headers
     if [ "$section_printed" -eq 0 ] && [[ "$name" != scale* ]] && [[ "$name" != charw* ]] && [[ "$name" != sub_* ]]; then
         echo "<h2 class=\"section\">Basic mono (scale=1)</h2>" >> "$REPORT"
     fi

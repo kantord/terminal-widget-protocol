@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Visual comparison: Kitty native text vs TWP mono widget.
 #
-# Both rendered in the same Kitty terminal (running twp-proxy), both
-# screenshotted from a headless Xvfb display via ImageMagick `import` —
+# Tests both basic text rendering and Kitty's text-sizing protocol (OSC 66)
+# parameters: scale, char-width, and subscale.
+#
+# Screenshotted from a headless Xvfb display via ImageMagick `import` —
 # same software renderer, same pixel density, same window.
 #
 # Uses Xvfb + llvmpipe (Mesa software OpenGL) so the test is fully
 # self-contained and doesn't touch your real desktop or window manager.
 #
-# A fresh Kitty instance is launched for each test case to ensure clean
+# A fresh Kitty instance is launched for each render to ensure clean
 # graphics state under software rendering.
 #
-# Dependencies: kitty, xvfb (xorg-server-xvfb), xdotool, imagemagick,
-#               python3 + Pillow + numpy, mesa (for llvmpipe)
+# Dependencies: kitty (≥0.35 for OSC 66), xvfb (xorg-server-xvfb),
+#               xdotool, imagemagick, python3 + Pillow + numpy,
+#               mesa (for llvmpipe)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,13 +63,20 @@ cleanup() {
 trap cleanup EXIT
 
 # ── Run one render in a fresh Kitty instance ───────────────────────
-# Usage: run_render <script_path> <output_png>
+# Usage: run_render <script> <output_png> [use_proxy]
+# If use_proxy is "no", kitty runs bare bash (for OSC 66 native tests).
 run_render() {
-    local script="$1" output="$2"
+    local script="$1" output="$2" use_proxy="${3:-yes}"
     local sig_file="$RESULTS/_render_sig_$$"
-    local kitty_pid
+    local kitty_pid shell_cmd
 
     rm -f "$sig_file"
+
+    if [ "$use_proxy" = "yes" ]; then
+        shell_cmd=("$BINARY" bash)
+    else
+        shell_cmd=(bash)
+    fi
 
     kitty --class="$CLASS" \
           --config=NONE \
@@ -81,7 +91,7 @@ run_render() {
           --override="confirm_os_window_close=0" \
           --override="shell_integration=disabled" \
           --override="window_padding_width=0" \
-          "$BINARY" bash -c "
+          "${shell_cmd[@]}" -c "
               printf '\x1b[?25l\x1b[2J\x1b[H'
               sleep 0.3
               $script
@@ -110,42 +120,24 @@ run_render() {
 }
 
 
-# ── Test cases ──────────────────────────────────────────────────────
-declare -a TESTS=(
-    "letters|ABCDEFGHIJ|10"
-    "pangram|The quick brown fox|19"
-    "digits|0123456789012345|16"
-    "wide_M|MMMMMMMMMMMMMMMMMMMM|20"
-    "mixed|Hello world 12345|17"
-)
+# ── Test runner ────────────────────────────────────────────────────
+# run_test <name> <text> <cols> <native_script> <twp_script> [native_proxy]
+# native_proxy: "yes" (default) runs native through proxy, "no" runs bare
+run_test() {
+    local name="$1" text="$2" cols="$3" native_script="$4" twp_script="$5"
+    local native_proxy="${6:-yes}"
 
-# ── Main ────────────────────────────────────────────────────────────
-echo "TWP Visual Comparison Test"
-echo "=========================="
-echo "Font: $FONT @ ${FSIZE}pt"
-echo
-
-start_xvfb
-
-pass=0; fail=0; skip=0
-
-for entry in "${TESTS[@]}"; do
-    IFS='|' read -r name text cols <<< "$entry"
     echo -n "  $name: "
 
-    # Native render
-    run_render "printf '%s' '$text'" "$RESULTS/kitty_${name}.png"
-
-    # TWP render
-    run_render "printf '\x1b_twp;v=1,c=$cols,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"$text\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" "$RESULTS/twp_${name}.png"
+    run_render "$native_script" "$RESULTS/kitty_${name}.png" "$native_proxy"
+    run_render "$twp_script" "$RESULTS/twp_${name}.png" "yes"
 
     if [ ! -f "$RESULTS/kitty_${name}.png" ] || [ ! -f "$RESULTS/twp_${name}.png" ]; then
         echo "SKIP (screenshot failed)"
-        skip=$((skip+1)); continue
+        return 2
     fi
 
-    # Compare: Kitty is reference, TWP must match its cell-fill pattern
-    result=$(python3 -c "
+    python3 -c "
 from PIL import Image
 import numpy as np
 
@@ -198,13 +190,111 @@ status = 'PASS' if matches == cols else 'FAIL'
 detail = f'{matches}/{cols}'
 if mm: detail += ' mm=' + ','.join(mm[:5])
 print(f'{status} {detail}')
-")
+" > "$RESULTS/metrics_${name}.txt"
+
+    local result
+    result=$(cat "$RESULTS/metrics_${name}.txt")
     echo "$result"
-    echo "$result" > "$RESULTS/metrics_${name}.txt"
 
-    case "$result" in PASS*) pass=$((pass+1)) ;; *) fail=$((fail+1)) ;; esac
+    return 0
+}
+
+
+# ── Main ────────────────────────────────────────────────────────────
+echo "TWP Visual Comparison Test"
+echo "=========================="
+echo "Font: $FONT @ ${FSIZE}pt"
+echo
+
+start_xvfb
+
+pass=0; fail=0; skip=0
+ALL_TESTS=()
+
+record() { ALL_TESTS+=("$1"); }
+
+# ── Basic mono tests (scale=1, native = plain printf) ──────────────
+echo "── Basic mono (scale=1) ──"
+
+run_test "letters" "ABCDEFGHIJ" 10 \
+    "printf '%s' 'ABCDEFGHIJ'" \
+    "printf '\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDEFGHIJ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'"
+record letters
+
+run_test "pangram" "The quick brown fox" 19 \
+    "printf '%s' 'The quick brown fox'" \
+    "printf '\x1b_twp;v=1,c=19,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"The quick brown fox\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'"
+record pangram
+
+run_test "digits" "0123456789012345" 16 \
+    "printf '%s' '0123456789012345'" \
+    "printf '\x1b_twp;v=1,c=16,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"0123456789012345\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'"
+record digits
+
+run_test "wide_M" "MMMMMMMMMMMMMMMMMMMM" 20 \
+    "printf '%s' 'MMMMMMMMMMMMMMMMMMMM'" \
+    "printf '\x1b_twp;v=1,c=20,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"MMMMMMMMMMMMMMMMMMMM\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'"
+record wide_M
+
+run_test "mixed" "Hello world 12345" 17 \
+    "printf '%s' 'Hello world 12345'" \
+    "printf '\x1b_twp;v=1,c=17,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"Hello world 12345\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'"
+record mixed
+
+echo
+
+# ── Text-sizing tests (OSC 66 vs TWP mono sizing params) ───────────
+echo "── Text-sizing (OSC 66 vs TWP) ──"
+
+# scale=2: each char in a 2×2 cell block (5 chars → c=10, r=2)
+run_test "scale2" "ABCDE" 10 \
+    "printf '\x1b]66;s=2;ABCDE\x07'" \
+    "printf '\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
+    "no"
+record scale2
+
+# scale=3: each char in a 3×3 cell block (3 chars → c=9, r=3)
+run_test "scale3" "ABC" 9 \
+    "printf '\x1b]66;s=3;ABC\x07'" \
+    "printf '\x1b_twp;v=1,c=9,r=3;{\"S\":{\"n\":\"mono\",\"t\":\"ABC\",\"s\":{\"scale\":3,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
+    "no"
+record scale3
+
+# char-width=2: double-wide, single-height (5 chars → c=10, r=1)
+run_test "charw2" "ABCDE" 10 \
+    "printf '\x1b]66;w=2;ABCDE\x07'" \
+    "printf '\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"char-width\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
+    "no"
+record charw2
+
+# subscale 1/2: half-size glyph in normal cell (10 chars → c=10, r=1)
+run_test "sub_half" "ABCDEFGHIJ" 10 \
+    "printf '\x1b]66;n=1:d=2;ABCDEFGHIJ\x07'" \
+    "printf '\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDEFGHIJ\",\"s\":{\"subscale-n\":1,\"subscale-d\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
+    "no"
+record sub_half
+
+# scale=2 + subscale 1/2: 2×2 cell box, normal-size glyph (5 chars → c=10, r=2)
+run_test "scale2_sub_half" "ABCDE" 10 \
+    "printf '\x1b]66;s=2:n=1:d=2;ABCDE\x07'" \
+    "printf '\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"scale\":2,\"subscale-n\":1,\"subscale-d\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
+    "no"
+record scale2_sub_half
+
+# scale=2 digits: accumulated alignment over a longer string (10 chars → c=20, r=2)
+run_test "scale2_digits" "0123456789" 20 \
+    "printf '\x1b]66;s=2;0123456789\x07'" \
+    "printf '\x1b_twp;v=1,c=20,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"0123456789\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" \
+    "no"
+record scale2_digits
+
+echo
+
+# Count results from metrics files
+for name in "${ALL_TESTS[@]}"; do
+    ml=$(cat "$RESULTS/metrics_${name}.txt" 2>/dev/null || echo "SKIP")
+    case "$ml" in PASS*) pass=$((pass+1)) ;; SKIP*) skip=$((skip+1)) ;; *) fail=$((fail+1)) ;; esac
 done
-
 total=$((pass + fail + skip))
 
 # ── HTML Report ─────────────────────────────────────────────────────
@@ -228,12 +318,13 @@ cat > "$REPORT" <<'HEADER'
   .img-box h3{font-size:.75rem;color:#64748b;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.05em}
   .img-box img{width:100%;image-rendering:auto;border:1px solid #334155;border-radius:4px}
   .note{font-size:.85rem;color:#64748b;margin-bottom:1.5rem;line-height:1.5}
+  h2.section{margin:1.5rem 0 1rem;font-size:1.3rem;border-bottom:1px solid #334155;padding-bottom:.5rem}
 </style></head><body>
 <h1>TWP Visual Comparison Report</h1>
 HEADER
 
 echo "<p class=\"meta\">Font: $FONT @ ${FSIZE}pt &middot; $(date)</p>" >> "$REPORT"
-echo "<p class=\"note\">Both screenshots from the same Kitty terminal running <code>twp-proxy</code> on a headless Xvfb display (llvmpipe software rendering). Captured via ImageMagick <code>import</code>. Native text passes through the proxy unchanged; TWP widgets are intercepted and rendered via Kitty Graphics.</p>" >> "$REPORT"
+echo "<p class=\"note\">Screenshots from Kitty running <code>twp-proxy</code> on a headless Xvfb display (llvmpipe software rendering). Captured via ImageMagick <code>import</code>. Basic tests compare native text vs TWP mono widget. Text-sizing tests compare Kitty OSC 66 output vs TWP mono with equivalent <code>scale</code>, <code>char-width</code>, and <code>subscale</code> parameters.</p>" >> "$REPORT"
 
 echo "<div class=\"summary\">" >> "$REPORT"
 echo "<div class=\"badge pass-bg\">$pass passed</div>" >> "$REPORT"
@@ -241,19 +332,32 @@ echo "<div class=\"badge pass-bg\">$pass passed</div>" >> "$REPORT"
 [ "$skip" -gt 0 ] && echo "<div class=\"badge skip-bg\">$skip skipped</div>" >> "$REPORT"
 echo "</div>" >> "$REPORT"
 
-for entry in "${TESTS[@]}"; do
-    IFS='|' read -r name text cols <<< "$entry"
+section_printed=0
+for name in "${ALL_TESTS[@]}"; do
+    # Section headers
+    if [ "$section_printed" -eq 0 ] && [[ "$name" != scale* ]] && [[ "$name" != charw* ]] && [[ "$name" != sub_* ]]; then
+        echo "<h2 class=\"section\">Basic mono (scale=1)</h2>" >> "$REPORT"
+    fi
+    if [ "$section_printed" -eq 0 ] && { [[ "$name" == scale* ]] || [[ "$name" == charw* ]] || [[ "$name" == sub_* ]]; }; then
+        echo "<h2 class=\"section\">Text-sizing (OSC 66 vs TWP)</h2>" >> "$REPORT"
+        section_printed=1
+    fi
+
     ml=$(cat "$RESULTS/metrics_${name}.txt" 2>/dev/null || echo "SKIP")
     sc="skip-bg"; case "$ml" in PASS*) sc="pass-bg";; FAIL*) sc="fail-bg";; esac
 
     cat >> "$REPORT" <<THTML
 <div class="test">
   <h2>$name <span class="status $sc">${ml%%\ *}</span></h2>
-  <p class="metrics">"$text" &middot; ${cols} cells &middot; $ml</p>
+  <p class="metrics">$ml</p>
   <div class="images">
 THTML
     for variant in kitty twp; do
-        [ "$variant" = "kitty" ] && label="Kitty native" || label="TWP mono"
+        if [[ "$name" == scale* ]] || [[ "$name" == charw* ]] || [[ "$name" == sub_* ]]; then
+            [ "$variant" = "kitty" ] && label="Kitty OSC 66" || label="TWP mono"
+        else
+            [ "$variant" = "kitty" ] && label="Kitty native" || label="TWP mono"
+        fi
         f="$RESULTS/${variant}_${name}.png"
         echo "<div class=\"img-box\"><h3>$label</h3>" >> "$REPORT"
         if [ -f "$f" ]; then
@@ -267,7 +371,6 @@ THTML
 done
 
 echo "</body></html>" >> "$REPORT"
-echo
 echo "=========================="
 echo "Results: $pass passed, $fail failed, $skip skipped (of $total)"
 echo "Report:  file://$RESULTS/report.html"

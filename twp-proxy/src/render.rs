@@ -40,11 +40,11 @@ pub fn set_cell_pixels(px_per_col: u32, px_per_row: u32) {
     let _ = CELL_PX.set((px_per_col, px_per_row));
 }
 
-fn px_per_col() -> u32 {
+pub(crate) fn px_per_col() -> u32 {
     CELL_PX.get().map(|c| c.0).unwrap_or(DEFAULT_PX_PER_COL)
 }
 
-fn px_per_row() -> u32 {
+pub(crate) fn px_per_row() -> u32 {
     CELL_PX.get().map(|c| c.1).unwrap_or(DEFAULT_PX_PER_ROW)
 }
 

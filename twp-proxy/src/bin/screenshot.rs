@@ -1,36 +1,70 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-fn usage() -> &'static str {
-    "Usage: twp-screenshot [OPTIONS] --output <PATH> -- <COMMAND>...
+use twp_proxy::compare::{self, CompareResult, TestStatus};
+use twp_proxy::report::{self, TestEntry};
 
-Launches kitty on a virtual X display, runs COMMAND inside it
-(optionally through twp-proxy), waits for rendering, screenshots
-the kitty window, and writes the PNG to OUTPUT.
+// ── Xvfb session ──────────────────────────────────────────────────
 
-Starts Xvfb automatically if no X server is running on the target
-display. Stops it when done.
-
-Options:
-  --output, -o <PATH>   Output PNG path (required)
-  --display <DISP>      X display to use (default: :55)
-  --proxy <PATH>        Run command through twp-proxy at PATH
-  --font <FAMILY>       Font family (default: monospace)
-  --font-size <N>       Font size in pt (default: 16)
-  --cols <N>            Terminal width in cells (default: 60)
-  --rows <N>            Terminal height in cells (default: 10)
-  --bg <COLOR>          Background color (default: #0a1e24)
-  --fg <COLOR>          Foreground color (default: #ecefc1)
-  --class <CLASS>       X11 window class (default: twp-screenshot)
-  --timeout <SECS>      Max seconds to wait for render (default: 15)
-  --                    Everything after this is the command to run"
+struct XvfbSession {
+    child: Option<Child>,
+    display: String,
 }
 
-struct Config {
+impl XvfbSession {
+    fn ensure(display: &str) -> Result<Self, String> {
+        if display_is_available(display) {
+            return Ok(Self {
+                child: None,
+                display: display.to_string(),
+            });
+        }
+        let child = Command::new("Xvfb")
+            .args([
+                display,
+                "-screen", "0", "1920x1080x24",
+                "+extension", "GLX",
+                "+render",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("failed to start Xvfb: {e}"))?;
+
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(5) {
+            if display_is_available(display) {
+                return Ok(Self {
+                    child: Some(child),
+                    display: display.to_string(),
+                });
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Err("Xvfb started but display not available after 5s".to_string())
+    }
+
+    fn display(&self) -> &str {
+        &self.display
+    }
+}
+
+impl Drop for XvfbSession {
+    fn drop(&mut self) {
+        if let Some(ref mut child) = self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+// ── Capture config ────────────────────────────────────────────────
+
+struct CaptureConfig {
     output: PathBuf,
     display: String,
     proxy: Option<String>,
@@ -45,98 +79,123 @@ struct Config {
     command: Vec<String>,
 }
 
-fn parse_args() -> Result<Config, String> {
-    let args: Vec<String> = env::args().skip(1).collect();
-    let mut output = None;
-    let mut display = ":55".to_string();
-    let mut proxy = None;
-    let mut font = "monospace".to_string();
-    let mut font_size = "16".to_string();
-    let mut cols = 60u32;
-    let mut rows = 10u32;
-    let mut bg = "#0a1e24".to_string();
-    let mut fg = "#ecefc1".to_string();
-    let mut class = "twp-screenshot".to_string();
-    let mut timeout = 15u64;
-    let mut command = Vec::new();
+// ── Test definitions ──────────────────────────────────────────────
 
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--" => {
-                command = args[i + 1..].to_vec();
-                break;
-            }
-            "--output" | "-o" => {
-                i += 1;
-                output = Some(PathBuf::from(&args[i]));
-            }
-            "--display" => {
-                i += 1;
-                display = args[i].clone();
-            }
-            "--proxy" => {
-                i += 1;
-                proxy = Some(args[i].clone());
-            }
-            "--font" => {
-                i += 1;
-                font = args[i].clone();
-            }
-            "--font-size" => {
-                i += 1;
-                font_size = args[i].clone();
-            }
-            "--cols" => {
-                i += 1;
-                cols = args[i].parse().map_err(|_| "invalid --cols")?;
-            }
-            "--rows" => {
-                i += 1;
-                rows = args[i].parse().map_err(|_| "invalid --rows")?;
-            }
-            "--bg" => {
-                i += 1;
-                bg = args[i].clone();
-            }
-            "--fg" => {
-                i += 1;
-                fg = args[i].clone();
-            }
-            "--class" => {
-                i += 1;
-                class = args[i].clone();
-            }
-            "--timeout" => {
-                i += 1;
-                timeout = args[i].parse().map_err(|_| "invalid --timeout")?;
-            }
-            "--help" | "-h" => return Err(usage().to_string()),
-            other => return Err(format!("unknown argument: {other}\n{}", usage())),
-        }
-        i += 1;
-    }
-
-    let output = output.ok_or_else(|| format!("--output is required\n{}", usage()))?;
-    if command.is_empty() {
-        return Err(format!("no command specified after --\n{}", usage()));
-    }
-
-    Ok(Config {
-        output,
-        display,
-        proxy,
-        font,
-        font_size,
-        cols,
-        rows,
-        bg,
-        fg,
-        class,
-        timeout,
-        command,
-    })
+struct TestCase {
+    name: &'static str,
+    text: &'static str,
+    cols: u32,
+    native_cmd: &'static str,
+    twp_cmd: &'static str,
+    native_uses_proxy: bool,
+    category: &'static str,
 }
+
+const TESTS: &[TestCase] = &[
+    // Basic mono (scale=1)
+    TestCase {
+        name: "letters",
+        text: "ABCDEFGHIJ",
+        cols: 10,
+        native_cmd: "printf '%s' 'ABCDEFGHIJ'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDEFGHIJ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "basic",
+    },
+    TestCase {
+        name: "pangram",
+        text: "The quick brown fox",
+        cols: 19,
+        native_cmd: "printf '%s' 'The quick brown fox'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=19,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"The quick brown fox\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "basic",
+    },
+    TestCase {
+        name: "digits",
+        text: "0123456789012345",
+        cols: 16,
+        native_cmd: "printf '%s' '0123456789012345'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=16,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"0123456789012345\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "basic",
+    },
+    TestCase {
+        name: "wide_M",
+        text: "MMMMMMMMMMMMMMMMMMMM",
+        cols: 20,
+        native_cmd: "printf '%s' 'MMMMMMMMMMMMMMMMMMMM'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=20,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"MMMMMMMMMMMMMMMMMMMM\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "basic",
+    },
+    TestCase {
+        name: "mixed",
+        text: "Hello world 12345",
+        cols: 17,
+        native_cmd: "printf '%s' 'Hello world 12345'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=17,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"Hello world 12345\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "basic",
+    },
+    // Text-sizing (OSC 66 vs TWP)
+    TestCase {
+        name: "scale2",
+        text: "ABCDE",
+        cols: 10,
+        native_cmd: "printf '\\x1b]66;s=2;ABCDE\\x07'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: false,
+        category: "text-sizing",
+    },
+    TestCase {
+        name: "scale3",
+        text: "ABC",
+        cols: 9,
+        native_cmd: "printf '\\x1b]66;s=3;ABC\\x07'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=9,r=3;{\"S\":{\"n\":\"mono\",\"t\":\"ABC\",\"s\":{\"scale\":3,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: false,
+        category: "text-sizing",
+    },
+    TestCase {
+        name: "charw2",
+        text: "ABCDE",
+        cols: 10,
+        native_cmd: "printf '\\x1b]66;w=2;ABCDE\\x07'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"char-width\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: false,
+        category: "text-sizing",
+    },
+    TestCase {
+        name: "sub_half",
+        text: "ABCDEFGHIJ",
+        cols: 10,
+        native_cmd: "printf '\\x1b]66;n=1:d=2;ABCDEFGHIJ\\x07'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDEFGHIJ\",\"s\":{\"subscale-n\":1,\"subscale-d\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: false,
+        category: "text-sizing",
+    },
+    TestCase {
+        name: "scale2_sub_half",
+        text: "ABCDE",
+        cols: 10,
+        native_cmd: "printf '\\x1b]66;s=2:n=1:d=2;ABCDE\\x07'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"scale\":2,\"subscale-n\":1,\"subscale-d\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: false,
+        category: "text-sizing",
+    },
+    TestCase {
+        name: "scale2_digits",
+        text: "0123456789",
+        cols: 20,
+        native_cmd: "printf '\\x1b]66;s=2;0123456789\\x07'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=20,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"0123456789\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\\x1b\\\\'",
+        native_uses_proxy: false,
+        category: "text-sizing",
+    },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────
 
 fn display_is_available(display: &str) -> bool {
     Command::new("xdpyinfo")
@@ -149,33 +208,7 @@ fn display_is_available(display: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn start_xvfb(display: &str) -> Result<Child, String> {
-    let child = Command::new("Xvfb")
-        .args([
-            display,
-            "-screen",
-            "0",
-            "1920x1080x24",
-            "+extension",
-            "GLX",
-            "+render",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("failed to start Xvfb: {e}"))?;
-
-    let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
-        if display_is_available(display) {
-            return Ok(child);
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    Err("Xvfb started but display not available after 5s".to_string())
-}
-
-fn wait_for_file(path: &std::path::Path, timeout: Duration) -> bool {
+fn wait_for_file(path: &Path, timeout: Duration) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {
         if path.exists() {
@@ -196,7 +229,7 @@ fn find_window(display: &str, class: &str) -> Option<String> {
     stdout.lines().last().map(|s| s.trim().to_string())
 }
 
-fn capture_window(display: &str, wid: &str, output: &std::path::Path) -> bool {
+fn capture_window(display: &str, wid: &str, output: &Path) -> bool {
     Command::new("import")
         .args(["-window", wid, output.to_str().unwrap_or("")])
         .env("DISPLAY", display)
@@ -205,46 +238,14 @@ fn capture_window(display: &str, wid: &str, output: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-fn screenshot_is_nonempty(path: &std::path::Path) -> bool {
+fn screenshot_is_nonempty(path: &Path) -> bool {
     fs::metadata(path).map(|m| m.len() > 500).unwrap_or(false)
 }
 
-fn main() -> ExitCode {
-    let cfg = match parse_args() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("{e}");
-            return ExitCode::from(2);
-        }
-    };
-
-    // Start Xvfb if needed
-    let mut xvfb: Option<Child> = None;
-    if !display_is_available(&cfg.display) {
-        match start_xvfb(&cfg.display) {
-            Ok(child) => xvfb = Some(child),
-            Err(e) => {
-                eprintln!("twp-screenshot: {e}");
-                return ExitCode::FAILURE;
-            }
-        }
-    }
-
-    let result = run_screenshot(&cfg);
-
-    // Clean up Xvfb if we started it
-    if let Some(ref mut child) = xvfb {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-
-    result
-}
-
-fn run_screenshot(cfg: &Config) -> ExitCode {
+fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
     let sig_file = {
         let mut p = env::temp_dir();
-        p.push(format!("twp-screenshot-sig-{}", std::process::id()));
+        p.push(format!("twp-ss-sig-{}-{}", std::process::id(), cfg.output.file_name().unwrap_or_default().to_string_lossy()));
         p
     };
     let _ = fs::remove_file(&sig_file);
@@ -276,7 +277,7 @@ fn run_screenshot(cfg: &Config) -> ExitCode {
     }
     kitty_args.extend(["bash".to_string(), "-c".to_string(), inner_script]);
 
-    let mut kitty = match Command::new("kitty")
+    let mut kitty = Command::new("kitty")
         .args(&kitty_args)
         .env("DISPLAY", &cfg.display)
         .env("LIBGL_ALWAYS_SOFTWARE", "1")
@@ -285,22 +286,14 @@ fn run_screenshot(cfg: &Config) -> ExitCode {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("twp-screenshot: failed to launch kitty: {e}");
-            let _ = fs::remove_file(&sig_file);
-            return ExitCode::FAILURE;
-        }
-    };
+        .map_err(|e| format!("failed to launch kitty: {e}"))?;
 
     let timeout = Duration::from_secs(cfg.timeout);
     if !wait_for_file(&sig_file, timeout) {
-        eprintln!("twp-screenshot: timed out waiting for render");
         let _ = kitty.kill();
         let _ = kitty.wait();
         let _ = fs::remove_file(&sig_file);
-        return ExitCode::FAILURE;
+        return Err("timed out waiting for render".to_string());
     }
 
     let capture_timeout = Duration::from_secs(10);
@@ -324,9 +317,375 @@ fn run_screenshot(cfg: &Config) -> ExitCode {
     let _ = fs::remove_file(&sig_file);
 
     if !captured {
-        eprintln!("twp-screenshot: failed to capture screenshot");
-        return ExitCode::FAILURE;
+        return Err("failed to capture screenshot".to_string());
     }
 
-    ExitCode::SUCCESS
+    fs::read(&cfg.output).map_err(|e| format!("failed to read screenshot: {e}"))
 }
+
+// ── Test runner ───────────────────────────────────────────────────
+
+struct TestConfig {
+    display: String,
+    proxy_path: String,
+    font: String,
+    font_size: String,
+    report_path: Option<PathBuf>,
+    results_dir: PathBuf,
+}
+
+fn run_tests(cfg: &TestConfig) -> ExitCode {
+    let xvfb = match XvfbSession::ensure(&cfg.display) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("twp-screenshot: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let _ = fs::create_dir_all(&cfg.results_dir);
+
+    let mut entries: Vec<TestEntry> = Vec::new();
+    let mut pass = 0u32;
+    let mut fail = 0u32;
+    let mut skip = 0u32;
+    let mut current_category = "";
+
+    for tc in TESTS {
+        if tc.category != current_category {
+            current_category = tc.category;
+            let label = match current_category {
+                "basic" => "Basic mono (scale=1)",
+                "text-sizing" => "Text-sizing (OSC 66 vs TWP)",
+                other => other,
+            };
+            eprintln!("── {label} ──");
+        }
+
+        eprint!("  {}: ", tc.name);
+
+        let native_proxy = if tc.native_uses_proxy {
+            Some(cfg.proxy_path.clone())
+        } else {
+            None
+        };
+
+        let native_cfg = CaptureConfig {
+            output: cfg.results_dir.join(format!("kitty_{}.png", tc.name)),
+            display: xvfb.display().to_string(),
+            proxy: native_proxy,
+            font: cfg.font.clone(),
+            font_size: cfg.font_size.clone(),
+            cols: 60,
+            rows: 10,
+            bg: "#0a1e24".to_string(),
+            fg: "#ecefc1".to_string(),
+            class: "twp-screenshot".to_string(),
+            timeout: 15,
+            command: vec![tc.native_cmd.to_string()],
+        };
+
+        let twp_cfg = CaptureConfig {
+            output: cfg.results_dir.join(format!("twp_{}.png", tc.name)),
+            proxy: Some(cfg.proxy_path.clone()),
+            ..CaptureConfig {
+                output: cfg.results_dir.join(format!("twp_{}.png", tc.name)),
+                display: xvfb.display().to_string(),
+                proxy: Some(cfg.proxy_path.clone()),
+                font: cfg.font.clone(),
+                font_size: cfg.font_size.clone(),
+                cols: 60,
+                rows: 10,
+                bg: "#0a1e24".to_string(),
+                fg: "#ecefc1".to_string(),
+                class: "twp-screenshot".to_string(),
+                timeout: 15,
+                command: vec![tc.twp_cmd.to_string()],
+            }
+        };
+
+        let native_png = match capture_one(&native_cfg) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("SKIP (native: {e})");
+                skip += 1;
+                entries.push(TestEntry {
+                    name: tc.name.to_string(),
+                    result: CompareResult {
+                        status: TestStatus::Skip(format!("native: {e}")),
+                        matches: 0,
+                        total: tc.cols,
+                        mismatches: vec![],
+                    },
+                    native_png: None,
+                    twp_png: None,
+                    category: tc.category.to_string(),
+                    native_label: if tc.native_uses_proxy { "Kitty native" } else { "Kitty OSC 66" }.to_string(),
+                });
+                continue;
+            }
+        };
+
+        let twp_png = match capture_one(&twp_cfg) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("SKIP (twp: {e})");
+                skip += 1;
+                entries.push(TestEntry {
+                    name: tc.name.to_string(),
+                    result: CompareResult {
+                        status: TestStatus::Skip(format!("twp: {e}")),
+                        matches: 0,
+                        total: tc.cols,
+                        mismatches: vec![],
+                    },
+                    native_png: Some(native_png),
+                    twp_png: None,
+                    category: tc.category.to_string(),
+                    native_label: if tc.native_uses_proxy { "Kitty native" } else { "Kitty OSC 66" }.to_string(),
+                });
+                continue;
+            }
+        };
+
+        let native_img = image::load_from_memory(&native_png)
+            .expect("invalid native PNG")
+            .to_rgba8();
+        let twp_img = image::load_from_memory(&twp_png)
+            .expect("invalid TWP PNG")
+            .to_rgba8();
+
+        let result = compare::compare_images(&native_img, &twp_img, tc.text, tc.cols);
+        let summary = result.summary();
+        eprintln!("{summary}");
+
+        if result.is_pass() {
+            pass += 1;
+        } else {
+            fail += 1;
+        }
+
+        entries.push(TestEntry {
+            name: tc.name.to_string(),
+            result,
+            native_png: Some(native_png),
+            twp_png: Some(twp_png),
+            category: tc.category.to_string(),
+            native_label: if tc.native_uses_proxy { "Kitty native" } else { "Kitty OSC 66" }.to_string(),
+        });
+    }
+
+    let total = pass + fail + skip;
+    eprintln!();
+    eprintln!("==========================");
+    eprintln!("Results: {pass} passed, {fail} failed, {skip} skipped (of {total})");
+
+    if let Some(ref report_path) = cfg.report_path {
+        let font_info = format!("Font: {} @ {}pt", cfg.font, cfg.font_size);
+        if let Err(e) = report::generate_html(&entries, &font_info, report_path) {
+            eprintln!("Failed to write report: {e}");
+        } else {
+            eprintln!("Report:  file://{}", report_path.display());
+        }
+    }
+
+    drop(xvfb);
+
+    if fail > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+// ── CLI ───────────────────────────────────────────────────────────
+
+fn main() -> ExitCode {
+    let args: Vec<String> = env::args().skip(1).collect();
+
+    if args.first().map(|s| s.as_str()) == Some("test") {
+        return main_test(&args[1..]);
+    }
+
+    let cfg = match parse_capture_args(&args) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let xvfb = match XvfbSession::ensure(&cfg.display) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("twp-screenshot: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let result = match capture_one(&cfg) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("twp-screenshot: {e}");
+            ExitCode::FAILURE
+        }
+    };
+
+    drop(xvfb);
+    result
+}
+
+fn main_test(args: &[String]) -> ExitCode {
+    let mut display = ":55".to_string();
+    let mut report_path = None;
+    let mut font = String::new();
+    let mut font_size = String::new();
+
+    // Read font from kitty config
+    if let Ok(contents) = fs::read_to_string(
+        dirs_from_home(".config/kitty/kitty.conf"),
+    ) {
+        for line in contents.lines() {
+            if let Some(rest) = line.strip_prefix("font_family") {
+                if font.is_empty() {
+                    font = rest.trim().to_string();
+                }
+            }
+            if let Some(rest) = line.strip_prefix("font_size") {
+                if font_size.is_empty() {
+                    font_size = rest.trim().to_string();
+                }
+            }
+        }
+    }
+    if font.is_empty() {
+        font = "monospace".to_string();
+    }
+    if font_size.is_empty() {
+        font_size = "16".to_string();
+    }
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--display" => {
+                i += 1;
+                display = args[i].clone();
+            }
+            "--report" => {
+                i += 1;
+                report_path = Some(PathBuf::from(&args[i]));
+            }
+            "--font" => {
+                i += 1;
+                font = args[i].clone();
+            }
+            "--font-size" => {
+                i += 1;
+                font_size = args[i].clone();
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let exe_dir = env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let proxy_path = exe_dir.join("twp-proxy").to_string_lossy().to_string();
+
+    eprintln!("TWP Visual Comparison Test");
+    eprintln!("==========================");
+    eprintln!("Font: {font} @ {font_size}pt");
+    eprintln!();
+
+    let results_dir = PathBuf::from("/tmp/twp-visual-test");
+
+    run_tests(&TestConfig {
+        display,
+        proxy_path,
+        font,
+        font_size,
+        report_path,
+        results_dir,
+    })
+}
+
+fn dirs_from_home(suffix: &str) -> PathBuf {
+    env::var("HOME")
+        .map(|h| PathBuf::from(h).join(suffix))
+        .unwrap_or_else(|_| PathBuf::from(suffix))
+}
+
+fn parse_capture_args(args: &[String]) -> Result<CaptureConfig, String> {
+    let mut output = None;
+    let mut display = ":55".to_string();
+    let mut proxy = None;
+    let mut font = "monospace".to_string();
+    let mut font_size = "16".to_string();
+    let mut cols = 60u32;
+    let mut rows = 10u32;
+    let mut bg = "#0a1e24".to_string();
+    let mut fg = "#ecefc1".to_string();
+    let mut class = "twp-screenshot".to_string();
+    let mut timeout = 15u64;
+    let mut command = Vec::new();
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--" => {
+                command = args[i + 1..].to_vec();
+                break;
+            }
+            "--output" | "-o" => { i += 1; output = Some(PathBuf::from(&args[i])); }
+            "--display" => { i += 1; display = args[i].clone(); }
+            "--proxy" => { i += 1; proxy = Some(args[i].clone()); }
+            "--font" => { i += 1; font = args[i].clone(); }
+            "--font-size" => { i += 1; font_size = args[i].clone(); }
+            "--cols" => { i += 1; cols = args[i].parse().map_err(|_| "invalid --cols")?; }
+            "--rows" => { i += 1; rows = args[i].parse().map_err(|_| "invalid --rows")?; }
+            "--bg" => { i += 1; bg = args[i].clone(); }
+            "--fg" => { i += 1; fg = args[i].clone(); }
+            "--class" => { i += 1; class = args[i].clone(); }
+            "--timeout" => { i += 1; timeout = args[i].parse().map_err(|_| "invalid --timeout")?; }
+            "--help" | "-h" => return Err(USAGE.to_string()),
+            other => return Err(format!("unknown argument: {other}\n{USAGE}")),
+        }
+        i += 1;
+    }
+
+    let output = output.ok_or_else(|| format!("--output is required\n{USAGE}"))?;
+    if command.is_empty() {
+        return Err(format!("no command specified after --\n{USAGE}"));
+    }
+
+    Ok(CaptureConfig {
+        output, display, proxy, font, font_size,
+        cols, rows, bg, fg, class, timeout, command,
+    })
+}
+
+const USAGE: &str = "Usage: twp-screenshot [test | capture options]
+
+Subcommands:
+  test                     Run visual comparison tests
+    --report <PATH>        Generate HTML report
+    --display <DISP>       X display (default: :55)
+    --font <FAMILY>        Font family
+    --font-size <N>        Font size in pt
+
+  (no subcommand)          Capture a single screenshot
+    --output, -o <PATH>    Output PNG path (required)
+    --display <DISP>       X display (default: :55)
+    --proxy <PATH>         Run through twp-proxy
+    --font <FAMILY>        Font family (default: monospace)
+    --font-size <N>        Font size in pt (default: 16)
+    --cols <N>             Terminal width in cells (default: 60)
+    --rows <N>             Terminal height in cells (default: 10)
+    --bg <COLOR>           Background color (default: #0a1e24)
+    --fg <COLOR>           Foreground color (default: #ecefc1)
+    --class <CLASS>        X11 window class (default: twp-screenshot)
+    --timeout <SECS>       Max wait seconds (default: 15)
+    -- <COMMAND>...        Command to run in kitty";

@@ -15,16 +15,16 @@ mod tests {
     use crate::protocol::Payload;
     use crate::render::{px_per_col, px_per_row, render_to_png};
     use image::RgbaImage;
-    use std::collections::HashMap;
+    use proptest::prelude::*;
 
     fn render_mono(text: &str, cols: u32, rows: u32, extra_style: &str) -> RgbaImage {
         let style = if extra_style.is_empty() {
-            format!(r#""color":"#000000","background":"#ffffff""#)
+            "\"color\":\"#000000\",\"background\":\"#ffffff\"".to_string()
         } else {
-            format!(r#""color":"#000000","background":"#ffffff",{extra_style}"#)
+            format!("\"color\":\"#000000\",\"background\":\"#ffffff\",{extra_style}")
         };
         let json = format!(
-            r##"{{"S":{{"n":"mono","t":"{text}","s":{{{style}}}}}}}"##
+            "{{\"S\":{{\"n\":\"mono\",\"t\":\"{text}\",\"s\":{{{style}}}}}}}"
         );
         let payload: Payload = serde_json::from_str(&json).unwrap();
         let scene = expand(payload.scene.unwrap(), &payload.defs);
@@ -160,7 +160,7 @@ mod tests {
         // scale=1: 3 cells wide, 1 cell tall
         let img1 = render_mono(text, 3, 1, "");
         // scale=2: 6 cells wide, 2 cells tall
-        let img2 = render_mono(text, 6, 2, r#""scale":2"#);
+        let img2 = render_mono(text, 6, 2, "\"scale\":2");
 
         assert_eq!(img1.width(), 3 * cell_w);
         assert_eq!(img2.width(), 6 * cell_w);
@@ -180,7 +180,7 @@ mod tests {
     fn scale3_triples_cell_size() {
         let text = "AB";
         let cell_w = px_per_col();
-        let img = render_mono(text, 6, 3, r#""scale":3"#);
+        let img = render_mono(text, 6, 3, "\"scale\":3");
         assert_eq!(img.width(), 6 * cell_w);
         assert_eq!(img.height(), 3 * px_per_row());
     }
@@ -189,7 +189,7 @@ mod tests {
     fn char_width2_doubles_horizontal_only() {
         let text = "ABC";
         let cell_w = px_per_col();
-        let img = render_mono(text, 6, 1, r#""char-width":2"#);
+        let img = render_mono(text, 6, 1, "\"char-width\":2");
         // 3 chars × 2 cells each = 6 cells wide, but only 1 cell tall
         assert_eq!(img.width(), 6 * cell_w);
         assert_eq!(img.height(), 1 * px_per_row());
@@ -201,7 +201,7 @@ mod tests {
         let cols = 4u32;
         let cell_w = px_per_col();
         let img_full = render_mono(text, cols, 1, "");
-        let img_half = render_mono(text, cols, 1, r#""subscale-n":1,"subscale-d":2"#);
+        let img_half = render_mono(text, cols, 1, "\"subscale-n\":1,\"subscale-d\":2");
 
         let ink_full: u32 = ink_per_cell(&img_full, cell_w, cols).iter().sum();
         let ink_half: u32 = ink_per_cell(&img_half, cell_w, cols).iter().sum();
@@ -254,6 +254,67 @@ mod tests {
                  {boundary_ink} ink pixels (max allowed: {max_bleed})",
                 cell + 1
             );
+        }
+    }
+
+    // ─── Property-based tests ───────────────────────────────────────
+
+    proptest! {
+        #[test]
+        fn mono_never_renders_blank(text in "[A-Za-z0-9]{1,30}") {
+            let cols = text.len() as u32;
+            let img = render_mono(&text, cols, 1, "");
+            let total_ink: u32 = ink_per_cell(&img, px_per_col(), cols).iter().sum();
+            prop_assert!(total_ink > 0, "text {:?} produced no ink", text);
+        }
+
+        #[test]
+        fn non_space_cells_have_ink(text in "[A-Z ]{1,15}") {
+            prop_assume!(text.chars().any(|c| c != ' '));
+            let cols = text.len() as u32;
+            let img = render_mono(&text, cols, 1, "");
+            let ink = ink_per_cell(&img, px_per_col(), cols);
+            for (i, ch) in text.chars().enumerate() {
+                if ch != ' ' {
+                    prop_assert!(ink[i] > 0, "cell {} (char '{}') has no ink", i, ch);
+                }
+            }
+        }
+
+        #[test]
+        fn scale_multiplies_dimensions(scale in 1u32..=4, len in 1u32..=8) {
+            let text: String = "X".repeat(len as usize);
+            let cols = len * scale;
+            let rows = scale;
+            let extra = format!("\"scale\":{scale}");
+            let img = render_mono(&text, cols, rows, &extra);
+            prop_assert_eq!(img.width(), cols * px_per_col());
+            prop_assert_eq!(img.height(), rows * px_per_row());
+        }
+
+        #[test]
+        fn deterministic_output(text in "[A-Za-z0-9]{1,15}") {
+            let cols = text.len() as u32;
+            let img1 = render_mono(&text, cols, 1, "");
+            let img2 = render_mono(&text, cols, 1, "");
+            prop_assert_eq!(img1.as_raw(), img2.as_raw());
+        }
+
+        #[test]
+        fn no_panic_on_sizing_params(
+            scale in 1u32..=4,
+            sub_n in 1u32..=4,
+            sub_d in 1u32..=4,
+            len in 1usize..=8,
+        ) {
+            prop_assume!(sub_n <= sub_d);
+            let text: String = "A".repeat(len);
+            let extra = format!(
+                "\"scale\":{scale},\"subscale-n\":{sub_n},\"subscale-d\":{sub_d}"
+            );
+            let cols = len as u32 * scale;
+            let rows = scale;
+            let _ = render_mono(&text, cols, rows, &extra);
         }
     }
 }

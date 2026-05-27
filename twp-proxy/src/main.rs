@@ -1,10 +1,3 @@
-mod cache;
-mod expand;
-mod kitty;
-mod parser;
-mod protocol;
-mod render;
-
 use std::env;
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
@@ -15,6 +8,8 @@ use nix::libc;
 use nix::sys::signal::{SigSet, Signal};
 use nix::sys::termios::{self, SetArg, Termios};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+
+use twp_proxy::{cache, expand, kitty, parser, protocol, render};
 
 // Default cell footprint when the payload header omits c=COLS,ROWS.
 // Most Phase 1 widgets are wide-and-short.

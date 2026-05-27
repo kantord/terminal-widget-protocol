@@ -25,33 +25,8 @@ FSIZE=$(grep "^font_size" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | sed
 
 rm -rf "$RESULTS" && mkdir -p "$RESULTS"
 
-# ── Virtual display ────────────────────────────────────────────────
-start_xvfb() {
-    echo "  Starting Xvfb on $VDISPLAY..."
-    Xvfb "$VDISPLAY" -screen 0 1920x1080x24 +extension GLX +render \
-        > /tmp/twp-xvfb.log 2>&1 &
-    XVFB_PID=$!
-
-    for _ in $(seq 1 50); do
-        DISPLAY="$VDISPLAY" xdpyinfo >/dev/null 2>&1 && break
-        sleep 0.1
-    done
-
-    if ! DISPLAY="$VDISPLAY" xdpyinfo >/dev/null 2>&1; then
-        echo "ERROR: Xvfb failed to start" >&2
-        cat /tmp/twp-xvfb.log >&2
-        exit 1
-    fi
-    echo "  Xvfb ready (PID $XVFB_PID)"
-}
-
-cleanup() {
-    kill "$XVFB_PID" 2>/dev/null || true
-    wait "$XVFB_PID" 2>/dev/null || true
-}
-trap cleanup EXIT
-
 # ── Screenshot helpers using twp-screenshot ────────────────────────
+# Xvfb is started/stopped automatically by twp-screenshot.
 ss_common=(--display "$VDISPLAY" --font "$FONT" --font-size "$FSIZE")
 
 ss_native() {
@@ -159,8 +134,6 @@ echo "TWP Visual Comparison Test"
 echo "=========================="
 echo "Font: $FONT @ ${FSIZE}pt"
 echo
-
-start_xvfb
 
 ALL_TESTS=()
 record() { ALL_TESTS+=("$1"); }

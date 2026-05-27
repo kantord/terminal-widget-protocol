@@ -1,7 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{Child, Command, ExitCode, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -12,11 +12,12 @@ Launches kitty on a virtual X display, runs COMMAND inside it
 (optionally through twp-proxy), waits for rendering, screenshots
 the kitty window, and writes the PNG to OUTPUT.
 
-Expects Xvfb to be running on the target display already.
+Starts Xvfb automatically if no X server is running on the target
+display. Stops it when done.
 
 Options:
   --output, -o <PATH>   Output PNG path (required)
-  --display <DISP>      X display to use (default: $DISPLAY or :55)
+  --display <DISP>      X display to use (default: :55)
   --proxy <PATH>        Run command through twp-proxy at PATH
   --font <FAMILY>       Font family (default: monospace)
   --font-size <N>       Font size in pt (default: 16)
@@ -25,7 +26,6 @@ Options:
   --bg <COLOR>          Background color (default: #0a1e24)
   --fg <COLOR>          Foreground color (default: #ecefc1)
   --class <CLASS>       X11 window class (default: twp-screenshot)
-  --signal <PATH>       Touch this file when command finishes rendering
   --timeout <SECS>      Max seconds to wait for render (default: 15)
   --                    Everything after this is the command to run"
 }
@@ -41,7 +41,6 @@ struct Config {
     bg: String,
     fg: String,
     class: String,
-    signal_file: Option<PathBuf>,
     timeout: u64,
     command: Vec<String>,
 }
@@ -49,7 +48,7 @@ struct Config {
 fn parse_args() -> Result<Config, String> {
     let args: Vec<String> = env::args().skip(1).collect();
     let mut output = None;
-    let mut display = env::var("DISPLAY").unwrap_or_else(|_| ":55".to_string());
+    let mut display = ":55".to_string();
     let mut proxy = None;
     let mut font = "monospace".to_string();
     let mut font_size = "16".to_string();
@@ -58,7 +57,6 @@ fn parse_args() -> Result<Config, String> {
     let mut bg = "#0a1e24".to_string();
     let mut fg = "#ecefc1".to_string();
     let mut class = "twp-screenshot".to_string();
-    let mut signal_file = None;
     let mut timeout = 15u64;
     let mut command = Vec::new();
 
@@ -109,10 +107,6 @@ fn parse_args() -> Result<Config, String> {
                 i += 1;
                 class = args[i].clone();
             }
-            "--signal" => {
-                i += 1;
-                signal_file = Some(PathBuf::from(&args[i]));
-            }
             "--timeout" => {
                 i += 1;
                 timeout = args[i].parse().map_err(|_| "invalid --timeout")?;
@@ -139,10 +133,46 @@ fn parse_args() -> Result<Config, String> {
         bg,
         fg,
         class,
-        signal_file,
         timeout,
         command,
     })
+}
+
+fn display_is_available(display: &str) -> bool {
+    Command::new("xdpyinfo")
+        .arg("-display")
+        .arg(display)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn start_xvfb(display: &str) -> Result<Child, String> {
+    let child = Command::new("Xvfb")
+        .args([
+            display,
+            "-screen",
+            "0",
+            "1920x1080x24",
+            "+extension",
+            "GLX",
+            "+render",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("failed to start Xvfb: {e}"))?;
+
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        if display_is_available(display) {
+            return Ok(child);
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err("Xvfb started but display not available after 5s".to_string())
 }
 
 fn wait_for_file(path: &std::path::Path, timeout: Duration) -> bool {
@@ -188,21 +218,43 @@ fn main() -> ExitCode {
         }
     };
 
-    let sig_file = cfg.signal_file.clone().unwrap_or_else(|| {
+    // Start Xvfb if needed
+    let mut xvfb: Option<Child> = None;
+    if !display_is_available(&cfg.display) {
+        match start_xvfb(&cfg.display) {
+            Ok(child) => xvfb = Some(child),
+            Err(e) => {
+                eprintln!("twp-screenshot: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let result = run_screenshot(&cfg);
+
+    // Clean up Xvfb if we started it
+    if let Some(ref mut child) = xvfb {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    result
+}
+
+fn run_screenshot(cfg: &Config) -> ExitCode {
+    let sig_file = {
         let mut p = env::temp_dir();
         p.push(format!("twp-screenshot-sig-{}", std::process::id()));
         p
-    });
+    };
     let _ = fs::remove_file(&sig_file);
 
-    // Build the inner command string for bash -c
     let inner_script = format!(
         "printf '\\x1b[?25l\\x1b[2J\\x1b[H'; sleep 0.3; {}; touch {}; sleep 120",
         cfg.command.join(" "),
         sig_file.display()
     );
 
-    // Build kitty args
     let mut kitty_args: Vec<String> = vec![
         format!("--class={}", cfg.class),
         "--config=NONE".to_string(),
@@ -237,11 +289,11 @@ fn main() -> ExitCode {
         Ok(c) => c,
         Err(e) => {
             eprintln!("twp-screenshot: failed to launch kitty: {e}");
+            let _ = fs::remove_file(&sig_file);
             return ExitCode::FAILURE;
         }
     };
 
-    // Wait for signal file (command finished rendering)
     let timeout = Duration::from_secs(cfg.timeout);
     if !wait_for_file(&sig_file, timeout) {
         eprintln!("twp-screenshot: timed out waiting for render");
@@ -251,9 +303,8 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Poll for a non-empty screenshot
-    let capture_start = Instant::now();
     let capture_timeout = Duration::from_secs(10);
+    let capture_start = Instant::now();
     let mut captured = false;
 
     while capture_start.elapsed() < capture_timeout {

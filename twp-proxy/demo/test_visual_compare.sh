@@ -1,43 +1,74 @@
 #!/usr/bin/env bash
-# Visual comparison: Kitty native text vs TWP mono, both in the same
-# Kitty terminal running twp-proxy. A single long-lived Kitty instance
-# is reused across test runs (PID file + remote-control socket).
+# Visual comparison: Kitty native text vs TWP mono widget.
 #
-# i3 rule `for_window [class="^twp-visual-test"] ...` sends the window
-# to workspace __twp_test on DP-3.
+# Both rendered in the same Kitty terminal (running twp-proxy), both
+# screenshotted from a headless Xvfb display via ImageMagick `import` —
+# same software renderer, same pixel density, same window.
 #
-# Dependencies: kitty, xdotool, scrot, python3 + Pillow + numpy
-set -e
+# Uses Xvfb + llvmpipe (Mesa software OpenGL) so the test is fully
+# self-contained and doesn't touch your real desktop or window manager.
+#
+# A fresh Kitty instance is launched for each test case to ensure clean
+# graphics state under software rendering.
+#
+# Dependencies: kitty, xvfb (xorg-server-xvfb), xdotool, imagemagick,
+#               python3 + Pillow + numpy, mesa (for llvmpipe)
+set -euo pipefail
 
-BINARY="$(pwd)/target/release/twp-proxy"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BINARY="${SCRIPT_DIR}/../target/release/twp-proxy"
 RESULTS="/tmp/twp-visual-test"
-PIDFILE="/tmp/twp-test-kitty.pid"
-SOCKPATH="/tmp/twp-test-kitty.sock"
-SOCK="unix:$SOCKPATH"
 CLASS="twp-visual-test"
+VDISPLAY=":55"
 
 FONT=$(grep "^font_family" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | sed 's/^font_family\s*//')
 FSIZE=$(grep "^font_size" ~/.config/kitty/kitty.conf 2>/dev/null | head -1 | sed 's/^font_size\s*//')
 : "${FONT:=monospace}"
 : "${FSIZE:=16}"
-WIN_W=600
-WIN_H=200
+
+export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+export KITTY_DISABLE_WAYLAND=1
+export DISPLAY="$VDISPLAY"
 
 rm -rf "$RESULTS" && mkdir -p "$RESULTS"
 
-# ── Ensure the long-lived Kitty instance is running ──────────────────
-ensure_kitty() {
-    # Check if existing instance is alive
-    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-        echo "  Reusing existing Kitty (PID $(cat "$PIDFILE"))"
-        return 0
-    fi
+# ── Virtual display ────────────────────────────────────────────────
+start_xvfb() {
+    echo "  Starting Xvfb on $VDISPLAY..."
+    Xvfb "$VDISPLAY" -screen 0 1920x1080x24 +extension GLX +render \
+        > /tmp/twp-xvfb.log 2>&1 &
+    XVFB_PID=$!
 
-    echo "  Launching new Kitty instance on DP-3..."
-    rm -f "$SOCKPATH"
+    for _ in $(seq 1 50); do
+        xdpyinfo -display "$VDISPLAY" >/dev/null 2>&1 && break
+        sleep 0.1
+    done
+
+    if ! xdpyinfo -display "$VDISPLAY" >/dev/null 2>&1; then
+        echo "ERROR: Xvfb failed to start" >&2
+        cat /tmp/twp-xvfb.log >&2
+        exit 1
+    fi
+    echo "  Xvfb ready (PID $XVFB_PID)"
+}
+
+cleanup() {
+    kill "$XVFB_PID" 2>/dev/null || true
+    wait "$XVFB_PID" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# ── Run one render in a fresh Kitty instance ───────────────────────
+# Usage: run_render <script_path> <output_png>
+run_render() {
+    local script="$1" output="$2"
+    local sig_file="$RESULTS/_render_sig_$$"
+    local kitty_pid
+
+    rm -f "$sig_file"
 
     kitty --class="$CLASS" \
-          --listen-on="$SOCK" \
           --config=NONE \
           --override="allow_remote_control=yes" \
           --override="font_family=$FONT" \
@@ -45,42 +76,41 @@ ensure_kitty() {
           --override="background=#0a1e24" \
           --override="foreground=#ecefc1" \
           --override="remember_window_size=no" \
-          --override="initial_window_width=$WIN_W" \
-          --override="initial_window_height=$WIN_H" \
-          --override="window_padding_width=0" \
+          --override="initial_window_width=60c" \
+          --override="initial_window_height=10c" \
           --override="confirm_os_window_close=0" \
           --override="shell_integration=disabled" \
-          --override="cursor_blink_interval=0" \
-          --override="cursor_shape=block" \
-          --override="cursor_opacity=0" \
-          "$BINARY" bash 2>/dev/null &
-    echo $! > "$PIDFILE"
+          --override="window_padding_width=0" \
+          "$BINARY" bash -c "
+              printf '\x1b[?25l\x1b[2J\x1b[H'
+              sleep 0.3
+              $script
+              touch $sig_file
+              sleep 120
+          " 2>/dev/null &
+    kitty_pid=$!
 
-    # Wait for socket
-    for _ in $(seq 1 20); do
-        [ -S "$SOCKPATH" ] && break
-        sleep 0.2
+    for _ in $(seq 1 100); do [ -f "$sig_file" ] && break; sleep 0.2; done
+
+    local wid
+    for _ in $(seq 1 10); do
+        sleep 1
+        wid=$(xdotool search --class "$CLASS" 2>/dev/null | tail -1)
+        if [ -n "$wid" ]; then
+            import -window "$wid" "$output" 2>/dev/null
+            local size
+            size=$(stat -c%s "$output" 2>/dev/null || echo 0)
+            [ "$size" -gt 500 ] && break
+        fi
     done
-    sleep 0.5
 
-    # Clear prompt so it doesn't pollute screenshots
-    kitty @ --to="$SOCK" send-text "export PS1='' PS2=''\r" 2>/dev/null
-    sleep 0.3
-    kitty @ --to="$SOCK" send-text "clear\r" 2>/dev/null
-    sleep 0.3
-
-    echo "  Kitty ready (PID $(cat "$PIDFILE"), socket $SOCKPATH)"
+    kill "$kitty_pid" 2>/dev/null || true
+    wait "$kitty_pid" 2>/dev/null || true
+    rm -f "$sig_file"
 }
 
 
-# ── Main ────────────────────────────────────────────────────────────
-echo "TWP Visual Comparison Test"
-echo "=========================="
-echo "Font: $FONT @ ${FSIZE}pt"
-echo
-
-ensure_kitty
-
+# ── Test cases ──────────────────────────────────────────────────────
 declare -a TESTS=(
     "letters|ABCDEFGHIJ|10"
     "pangram|The quick brown fox|19"
@@ -89,94 +119,40 @@ declare -a TESTS=(
     "mixed|Hello world 12345|17"
 )
 
+# ── Main ────────────────────────────────────────────────────────────
+echo "TWP Visual Comparison Test"
+echo "=========================="
+echo "Font: $FONT @ ${FSIZE}pt"
+echo
+
+start_xvfb
+
 pass=0; fail=0; skip=0
 
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r name text cols <<< "$entry"
     echo -n "  $name: "
 
-    # Single script does both: native render → screenshot → TWP render → screenshot.
-    # This avoids timing issues between send-text and bash execution.
-    wid=""
-    wid=$(xdotool search --class "$CLASS" 2>/dev/null | tail -1)
+    # Native render
+    run_render "printf '%s' '$text'" "$RESULTS/kitty_${name}.png"
 
-    cat > "$RESULTS/_test_${name}.sh" <<SEOF
-#!/bin/bash
-# --- Native ---
-printf '\x1b[?25l\x1b[2J\x1b[H'
-sleep 0.3
-printf '%s' '$text'
-sleep 1
-# Signal: touch a file so the outer script knows to screenshot
-touch $RESULTS/_ready_native_${name}
-sleep 2
-
-# --- TWP ---
-printf '\x1b[2J\x1b[H'
-sleep 0.3
-printf '\x1b_twp;v=1,c=$cols,r=1;{"S":{"n":"mono","t":"$text","s":{"color":"#ecefc1","background":"#0a1e24"}}}\x1b\\\\'
-sleep 1
-touch $RESULTS/_ready_twp_${name}
-sleep 2
-SEOF
-    chmod +x "$RESULTS/_test_${name}.sh"
-
-    # Clean signal files
-    rm -f "$RESULTS/_ready_native_${name}" "$RESULTS/_ready_twp_${name}"
-
-    # Launch the test script
-    kitty @ --to="$SOCK" send-text "bash $RESULTS/_test_${name}.sh\r" 2>/dev/null
-
-    # Wait for native screenshot signal
-    for _ in $(seq 1 30); do
-        [ -f "$RESULTS/_ready_native_${name}" ] && break
-        sleep 0.2
-    done
-    sleep 0.3
-
-    # Screenshot native
-    orig=""
-    orig=$(xdotool getactivewindow 2>/dev/null || true)
-    [ -n "$wid" ] && xdotool windowfocus --sync "$wid" 2>/dev/null || true
-    sleep 0.1
-    scrot -u -o "$RESULTS/kitty_${name}.png" 2>/dev/null || true
-    [ -n "$orig" ] && xdotool windowfocus "$orig" 2>/dev/null || true
-
-    # Wait for TWP screenshot signal
-    for _ in $(seq 1 30); do
-        [ -f "$RESULTS/_ready_twp_${name}" ] && break
-        sleep 0.2
-    done
-    sleep 0.3
-
-    # Screenshot TWP
-    orig=$(xdotool getactivewindow 2>/dev/null || true)
-    [ -n "$wid" ] && xdotool windowfocus --sync "$wid" 2>/dev/null || true
-    sleep 0.1
-    scrot -u -o "$RESULTS/twp_${name}.png" 2>/dev/null || true
-    [ -n "$orig" ] && xdotool windowfocus "$orig" 2>/dev/null || true
-
-    # Wait for script to finish
-    sleep 2
+    # TWP render
+    run_render "printf '\x1b_twp;v=1,c=$cols,r=1;{\"S\":{\"n\":\"mono\",\"t\":\"$text\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}}\x1b\\\\'" "$RESULTS/twp_${name}.png"
 
     if [ ! -f "$RESULTS/kitty_${name}.png" ] || [ ! -f "$RESULTS/twp_${name}.png" ]; then
         echo "SKIP (screenshot failed)"
         skip=$((skip+1)); continue
     fi
 
-    # Compare TWP against Kitty (Kitty is the reference)
+    # Compare: Kitty is reference, TWP must match its cell-fill pattern
     result=$(python3 -c "
 from PIL import Image
 import numpy as np
 
-try:
-    kit_img = np.array(Image.open('$RESULTS/kitty_${name}.png').convert('RGB')).astype(float)
-    twp_img = np.array(Image.open('$RESULTS/twp_${name}.png').convert('RGB')).astype(float)
-except Exception as e:
-    print(f'SKIP {e}')
-    exit(0)
-
+kit = np.array(Image.open('$RESULTS/kitty_${name}.png').convert('RGB')).astype(float)
+twp = np.array(Image.open('$RESULTS/twp_${name}.png').convert('RGB')).astype(float)
 cols = $cols
+text = '''$text'''
 
 def cell_fill(img, ncols):
     bg = img[0, -1, :].copy()
@@ -184,67 +160,49 @@ def cell_fill(img, ncols):
     ink_th = col_dev.max() * 0.02
     ink_cols = np.where(col_dev > ink_th)[0]
     if len(ink_cols) < 2:
-        return [False] * ncols
-    x_off = int(ink_cols[0])
-    x_end = int(ink_cols[-1]) + 1
-    cell_w = (x_end - x_off) // ncols
-    if cell_w < 1:
-        return [False] * ncols
+        return [False] * ncols, 0
+    x0 = int(ink_cols[0])
+    x1 = int(ink_cols[-1]) + 1
+    cw = (x1 - x0) // ncols
+    if cw < 1:
+        return [False] * ncols, 0
     inks = []
     for i in range(ncols):
-        x0 = x_off + i * cell_w
-        x1 = min(x0 + cell_w, img.shape[1])
-        if x0 >= img.shape[1]:
+        cx0 = x0 + i * cw
+        cx1 = min(cx0 + cw, img.shape[1])
+        if cx0 >= img.shape[1]:
             inks.append(0.0); continue
-        region = img[:, x0:x1, :]
-        inks.append(float(np.sqrt(((region - bg)**2).sum(axis=2)).sum()))
-    # Threshold: 20% of median non-zero ink
+        inks.append(float(np.sqrt(((img[:, cx0:cx1, :] - bg)**2).sum(axis=2)).sum()))
     nonzero = sorted([v for v in inks if v > 0])
     if not nonzero:
-        return [False] * ncols
+        return [False] * ncols, 0
     threshold = nonzero[len(nonzero)//2] * 0.20
-    return [v > threshold for v in inks]
+    return [v > threshold for v in inks], sum(v > threshold for v in inks)
 
-kit_cells = cell_fill(kit_img, cols)
-twp_cells = cell_fill(twp_img, cols)
+kit_cells, kit_n = cell_fill(kit, cols)
+twp_cells, twp_n = cell_fill(twp, cols)
 
-text = '''$text'''
-
-# Sanity: both images must have ink in at least half the non-space cells.
-# If either is blank, the test is invalid (screenshot or render failed).
 expected_filled = sum(1 for c in text[:cols] if c != ' ')
-kit_filled = sum(kit_cells)
-twp_filled = sum(twp_cells)
 min_ink = max(expected_filled // 2, 1)
 
-if kit_filled < min_ink:
-    print(f'FAIL kitty has no ink ({kit_filled}/{expected_filled} cells filled)')
+if kit_n < min_ink:
+    print(f'FAIL kitty blank ({kit_n}/{expected_filled})')
     exit(0)
-if twp_filled < min_ink:
-    print(f'FAIL twp has no ink ({twp_filled}/{expected_filled} cells filled)')
+if twp_n < min_ink:
+    print(f'FAIL twp blank ({twp_n}/{expected_filled})')
     exit(0)
 
 matches = sum(k == t for k, t in zip(kit_cells, twp_cells))
-mismatches = []
-for i, (k, t) in enumerate(zip(kit_cells, twp_cells)):
-    if k != t:
-        ch = text[i] if i < len(text) else '?'
-        mismatches.append(f'{i}:{ch}(kit={\"■\" if k else \"□\"},twp={\"■\" if t else \"□\"})')
-
+mm = [f'{i}:{text[i] if i<len(text) else \"?\"}' for i,(k,t) in enumerate(zip(kit_cells, twp_cells)) if k != t]
 status = 'PASS' if matches == cols else 'FAIL'
 detail = f'{matches}/{cols}'
-if mismatches:
-    detail += ' ' + ' '.join(mismatches[:5])
+if mm: detail += ' mm=' + ','.join(mm[:5])
 print(f'{status} {detail}')
 ")
-
-    echo "  $result"
+    echo "$result"
     echo "$result" > "$RESULTS/metrics_${name}.txt"
 
-    case "$result" in
-        PASS*) pass=$((pass+1)) ;;
-        *) fail=$((fail+1)) ;;
-    esac
+    case "$result" in PASS*) pass=$((pass+1)) ;; *) fail=$((fail+1)) ;; esac
 done
 
 total=$((pass + fail + skip))
@@ -268,14 +226,14 @@ cat > "$REPORT" <<'HEADER'
   .images{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:1rem}
   .img-box{background:#0f172a;border-radius:8px;padding:.75rem}
   .img-box h3{font-size:.75rem;color:#64748b;margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.05em}
-  .img-box img{width:100%;image-rendering:pixelated;border:1px solid #334155;border-radius:4px}
+  .img-box img{width:100%;image-rendering:auto;border:1px solid #334155;border-radius:4px}
   .note{font-size:.85rem;color:#64748b;margin-bottom:1.5rem;line-height:1.5}
 </style></head><body>
 <h1>TWP Visual Comparison Report</h1>
 HEADER
 
 echo "<p class=\"meta\">Font: $FONT @ ${FSIZE}pt &middot; $(date)</p>" >> "$REPORT"
-echo "<p class=\"note\">Both screenshots taken from the same Kitty terminal running <code>twp-proxy</code>. Native text passes through the proxy unchanged; TWP widgets are intercepted and rendered via Kitty Graphics. Same window, same GPU, same pixel density.</p>" >> "$REPORT"
+echo "<p class=\"note\">Both screenshots from the same Kitty terminal running <code>twp-proxy</code> on a headless Xvfb display (llvmpipe software rendering). Captured via ImageMagick <code>import</code>. Native text passes through the proxy unchanged; TWP widgets are intercepted and rendered via Kitty Graphics.</p>" >> "$REPORT"
 
 echo "<div class=\"summary\">" >> "$REPORT"
 echo "<div class=\"badge pass-bg\">$pass passed</div>" >> "$REPORT"
@@ -291,12 +249,11 @@ for entry in "${TESTS[@]}"; do
     cat >> "$REPORT" <<THTML
 <div class="test">
   <h2>$name <span class="status $sc">${ml%%\ *}</span></h2>
-  <p class="metrics">"$text" · ${cols} cells</p>
-  <p class="metrics">$ml</p>
+  <p class="metrics">"$text" &middot; ${cols} cells &middot; $ml</p>
   <div class="images">
 THTML
     for variant in kitty twp; do
-        [ "$variant" = "kitty" ] && label="Native text (printf)" || label="TWP mono widget"
+        [ "$variant" = "kitty" ] && label="Kitty native" || label="TWP mono"
         f="$RESULTS/${variant}_${name}.png"
         echo "<div class=\"img-box\"><h3>$label</h3>" >> "$REPORT"
         if [ -f "$f" ]; then
@@ -314,4 +271,3 @@ echo
 echo "=========================="
 echo "Results: $pass passed, $fail failed, $skip skipped (of $total)"
 echo "Report:  file://$RESULTS/report.html"
-echo "Kitty:   PID $(cat "$PIDFILE" 2>/dev/null) (kept alive for reuse)"

@@ -193,6 +193,58 @@ const TESTS: &[TestCase] = &[
         native_uses_proxy: false,
         category: "text-sizing",
     },
+    // Flex + mono: layouts reproducible with manual text placement
+    //
+    // Two mono labels adjacent in a flex row = same as concatenated text
+    TestCase {
+        name: "flex_row_concat",
+        text: "AAABBB",
+        cols: 6,
+        native_cmd: "printf '%s' 'AAABBB'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=6,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AAA\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"BBB\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-mono",
+    },
+    // Three mono labels filling a row exactly = same as concatenated text
+    TestCase {
+        name: "flex_row_three",
+        text: "AABBCC",
+        cols: 6,
+        native_cmd: "printf '%s' 'AABBCC'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=6,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AA\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"BB\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"CC\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-mono",
+    },
+    // Vertical flex with mono lines = same as two lines of text
+    TestCase {
+        name: "flex_col_lines",
+        text: "ABCDE",
+        cols: 5,
+        native_cmd: "printf 'ABCDE\\nFGHIJ'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=5,r=2;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"column\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"FGHIJ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-mono",
+    },
+    // Mono labels with different lengths in a row = concatenated
+    TestCase {
+        name: "flex_row_uneven",
+        text: "ABCDEFGHIJ",
+        cols: 10,
+        native_cmd: "printf '%s' 'ABCDEFGHIJ'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"A\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"BCDE\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"FGHIJ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-mono",
+    },
+    // Nested flex: row inside column, each mono fills exactly = same as two lines
+    TestCase {
+        name: "flex_nested_exact",
+        text: "ABCDE",
+        cols: 5,
+        native_cmd: "printf 'ABCDE\\nFGHIJ'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=5,r=2;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"column\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AB\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"CDE\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]},{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"FGH\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"IJ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-mono",
+    },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -248,13 +300,20 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
         p.push(format!("twp-ss-sig-{}-{}", std::process::id(), cfg.output.file_name().unwrap_or_default().to_string_lossy()));
         p
     };
+    let script_file = {
+        let mut p = env::temp_dir();
+        p.push(format!("twp-ss-script-{}-{}.sh", std::process::id(), cfg.output.file_name().unwrap_or_default().to_string_lossy()));
+        p
+    };
     let _ = fs::remove_file(&sig_file);
 
-    let inner_script = format!(
-        "printf '\\x1b[?25l\\x1b[2J\\x1b[H'; sleep 0.3; {}; touch {}; sleep 120",
+    let script_content = format!(
+        "#!/bin/bash\nprintf '\\x1b[?25l\\x1b[2J\\x1b[H'\nsleep 0.3\n{}\ntouch {}\nsleep 120\n",
         cfg.command.join(" "),
         sig_file.display()
     );
+    fs::write(&script_file, &script_content)
+        .map_err(|e| format!("failed to write script: {e}"))?;
 
     let mut kitty_args: Vec<String> = vec![
         format!("--class={}", cfg.class),
@@ -275,7 +334,7 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
     if let Some(ref proxy) = cfg.proxy {
         kitty_args.push(proxy.clone());
     }
-    kitty_args.extend(["bash".to_string(), "-c".to_string(), inner_script]);
+    kitty_args.extend(["bash".to_string(), script_file.to_string_lossy().to_string()]);
 
     let mut kitty = Command::new("kitty")
         .args(&kitty_args)
@@ -315,6 +374,7 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
     let _ = kitty.kill();
     let _ = kitty.wait();
     let _ = fs::remove_file(&sig_file);
+    let _ = fs::remove_file(&script_file);
 
     if !captured {
         return Err("failed to capture screenshot".to_string());
@@ -357,6 +417,7 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             let label = match current_category {
                 "basic" => "Basic mono (scale=1)",
                 "text-sizing" => "Text-sizing (OSC 66 vs TWP)",
+                "flex-mono" => "Flex + mono (manual text reference)",
                 other => other,
             };
             eprintln!("── {label} ──");

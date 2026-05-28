@@ -72,6 +72,7 @@ pub fn generate_html(
             let title = match current_category.as_str() {
                 "basic" => "Basic mono (scale=1)",
                 "text-sizing" => "Text-sizing (OSC 66 vs TWP)",
+                "flex-mono" => "Flex + mono (manual text reference)",
                 other => other,
             };
             html.push_str(&format!(

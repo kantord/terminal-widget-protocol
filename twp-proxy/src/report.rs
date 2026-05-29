@@ -73,6 +73,7 @@ pub fn generate_html(
                 "basic" => "Basic mono (scale=1)",
                 "text-sizing" => "Text-sizing (OSC 66 vs TWP)",
                 "flex-mono" => "Flex + mono (manual text reference)",
+                "flex-nested" => "Nested flex (tables / dashboards)",
                 other => other,
             };
             html.push_str(&format!(

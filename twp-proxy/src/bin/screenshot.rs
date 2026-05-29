@@ -247,6 +247,46 @@ const TESTS: &[TestCase] = &[
         native_uses_proxy: true,
         category: "flex-mono",
     },
+    // Nested flex: column of space-between rows = a key-value table.
+    // Each row: label left, value right. c=12, 3 rows.
+    //   CPU      100
+    //   MEM      050
+    //   NET      012
+    TestCase {
+        name: "nested_kv_table",
+        text: "CPU      100",
+        cols: 12,
+        native_cmd: "printf '%s\\n%s\\n%s' 'CPU      100' 'MEM      050' 'NET      012'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=12,r=3;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"column\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"justify-content\":\"space-between\",\"width\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"CPU\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"100\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]},{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"justify-content\":\"space-between\",\"width\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"MEM\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"050\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]},{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"justify-content\":\"space-between\",\"width\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"NET\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"012\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-nested",
+    },
+    // Nested flex: left-aligned header row over a space-between footer row.
+    // c=10, 2 rows. (3-char blocks so cell-fill is unambiguous.)
+    //   HEADER
+    //   AAA    ZZZ
+    TestCase {
+        name: "nested_header_footer",
+        text: "HEADER",
+        cols: 10,
+        native_cmd: "printf '%s\\n%s' 'HEADER' 'AAA    ZZZ'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"column\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"HEADER\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"justify-content\":\"space-between\",\"width\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AAA\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"ZZZ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-nested",
+    },
+    // Nested flex: outer row (space-between) holding two column stacks =
+    // a two-pane sidebar layout. c=12, 2 rows tall.
+    //   AAA      YYY
+    //   BBB      ZZZ
+    TestCase {
+        name: "nested_two_panes",
+        text: "AAA      YYY",
+        cols: 12,
+        native_cmd: "printf '%s\\n%s' 'AAA      YYY' 'BBB      ZZZ'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=12,r=2;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"justify-content\":\"space-between\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"flex\",\"s\":{\"flex-direction\":\"column\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AAA\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"BBB\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]},{\"n\":\"flex\",\"s\":{\"flex-direction\":\"column\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"YYY\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"ZZZ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-nested",
+    },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -420,6 +460,7 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
                 "basic" => "Basic mono (scale=1)",
                 "text-sizing" => "Text-sizing (OSC 66 vs TWP)",
                 "flex-mono" => "Flex + mono (manual text reference)",
+                "flex-nested" => "Nested flex (tables / dashboards)",
                 other => other,
             };
             eprintln!("── {label} ──");

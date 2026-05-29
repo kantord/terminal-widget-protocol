@@ -193,55 +193,57 @@ const TESTS: &[TestCase] = &[
         native_uses_proxy: false,
         category: "text-sizing",
     },
-    // Flex + mono: layouts reproducible with manual text placement
+    // Flex + mono: justify-content distributes labels to exact cells.
+    // The native reference uses printf with a precise number of spaces
+    // that reproduces flex's computed gaps.
     //
-    // Two mono labels adjacent in a flex row = same as concatenated text
+    // space-between, 2 items in c=10: "AA" @ 0-1, "BB" @ 8-9 (6-cell gap)
     TestCase {
-        name: "flex_row_concat",
-        text: "AAABBB",
-        cols: 6,
-        native_cmd: "printf '%s' 'AAABBB'",
-        twp_cmd: "printf '\\x1b_twp;v=1,c=6,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AAA\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"BBB\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
+        name: "flex_between_2",
+        text: "AA      BB",
+        cols: 10,
+        native_cmd: "printf '%s' 'AA      BB'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"justify-content\":\"space-between\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AA\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"BB\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
         native_uses_proxy: true,
         category: "flex-mono",
     },
-    // Three mono labels filling a row exactly = same as concatenated text
+    // space-between, 3 items in c=11: "A" @ 0, "B" @ 5, "C" @ 10 (4-cell gaps)
     TestCase {
-        name: "flex_row_three",
-        text: "AABBCC",
-        cols: 6,
-        native_cmd: "printf '%s' 'AABBCC'",
-        twp_cmd: "printf '\\x1b_twp;v=1,c=6,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AA\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"BB\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"CC\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
+        name: "flex_between_3",
+        text: "A    B    C",
+        cols: 11,
+        native_cmd: "printf '%s' 'A    B    C'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=11,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"justify-content\":\"space-between\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"A\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"B\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"C\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
         native_uses_proxy: true,
         category: "flex-mono",
     },
-    // Vertical flex with mono lines = same as two lines of text
+    // space-between, wide gap in c=20: "MMM" @ 0-2, "MMM" @ 17-19 (14-cell gap)
     TestCase {
-        name: "flex_col_lines",
+        name: "flex_between_wide",
+        text: "MMM              MMM",
+        cols: 20,
+        native_cmd: "printf '%s' 'MMM              MMM'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=20,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"justify-content\":\"space-between\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"MMM\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"MMM\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-mono",
+    },
+    // space-between, uneven widths in c=8: "AAA" @ 0-2, "B" @ 7 (4-cell gap)
+    TestCase {
+        name: "flex_between_uneven",
+        text: "AAA    B",
+        cols: 8,
+        native_cmd: "printf '%s' 'AAA    B'",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=8,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"justify-content\":\"space-between\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AAA\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"B\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
+        native_uses_proxy: true,
+        category: "flex-mono",
+    },
+    // Vertical flex stacks mono lines into separate rows (multi-row composition)
+    TestCase {
+        name: "flex_col_stack",
         text: "ABCDE",
         cols: 5,
         native_cmd: "printf 'ABCDE\\nFGHIJ'",
         twp_cmd: "printf '\\x1b_twp;v=1,c=5,r=2;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"column\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"ABCDE\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"FGHIJ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
-        native_uses_proxy: true,
-        category: "flex-mono",
-    },
-    // Mono labels with different lengths in a row = concatenated
-    TestCase {
-        name: "flex_row_uneven",
-        text: "ABCDEFGHIJ",
-        cols: 10,
-        native_cmd: "printf '%s' 'ABCDEFGHIJ'",
-        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=1;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"A\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"BCDE\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"FGHIJ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}}\\x1b\\\\'",
-        native_uses_proxy: true,
-        category: "flex-mono",
-    },
-    // Nested flex: row inside column, each mono fills exactly = same as two lines
-    TestCase {
-        name: "flex_nested_exact",
-        text: "ABCDE",
-        cols: 5,
-        native_cmd: "printf 'ABCDE\\nFGHIJ'",
-        twp_cmd: "printf '\\x1b_twp;v=1,c=5,r=2;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"column\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"AB\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"CDE\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]},{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"background\":\"#0a1e24\"},\"c\":[{\"n\":\"mono\",\"t\":\"FGH\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}},{\"n\":\"mono\",\"t\":\"IJ\",\"s\":{\"color\":\"#ecefc1\",\"background\":\"#0a1e24\"}}]}]}}\\x1b\\\\'",
         native_uses_proxy: true,
         category: "flex-mono",
     },

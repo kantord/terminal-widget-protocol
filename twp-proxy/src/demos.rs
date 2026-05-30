@@ -80,13 +80,19 @@ fn diff_review() -> Demo {
         json!({"n":"text","t":"reviewed 2h ago","s":{"color":"#8b949e","font-size":11,"font-family":sans,"letter-spacing":"0px"}})
     ]});
     let comment_text = json!({"n":"text","t":"Good — a named constant beats a magic number. Ship it.","s":{"color":"#c9d1d9","font-size":13,"font-family":sans,"letter-spacing":"0px"}});
-    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":5,"padding":10,"background":"#21262d","border-radius":10,"box-shadow":"0 6px 16px #00000088","max-width":"82%"},"c":[author, comment_text]});
-    let comment = json!({"n":"flex","s":{"flex-direction":"row","align-items":"start","gap":10,"width":"100%"},"c":[avatar, bubble]});
+    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":5,"padding":10,"background":"#2d333b","border-radius":10,"border":{"width":1,"color":"#444c56"},"box-shadow":"0 8px 22px #000000aa","max-width":"62%"},"c":[author, comment_text]});
+    let comment = json!({"n":"flex","s":{"flex-direction":"row","align-items":"start","gap":10},"c":[avatar, bubble]});
+
+    // The comment floats *over* the diff (a review popover), positioned by a
+    // flex overlay inside a stack — anchored near the changed line, its shadow
+    // lifting it off the code.
+    let floating = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","height":"100%","justify-content":"flex-start","align-items":"flex-start","padding-top":"62px","padding-left":"90px"},"c":[comment]});
+    let stack = json!({"n":"stack","s":{"width":"100%","height":190},"c":[diff_box, floating]});
 
     let scene = json!({"S":{
         "n":"flex",
         "s":{"flex-direction":"column","gap":12,"padding":18,"width":"100%","height":"100%","background":"#0d1117"},
-        "c":[file_header, diff_box, comment]
+        "c":[file_header, stack]
     }});
 
     Demo { name: "app_diff_review", category: "mini-app", cols: 74, rows: 16, scene }

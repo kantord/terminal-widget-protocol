@@ -43,6 +43,34 @@ pub struct Node {
     /// For `$<name>` component invocations: values that fill the def's holes.
     #[serde(default)]
     pub props: HashMap<String, PropValue>,
+
+    /// For `img` nodes: where the bitmap comes from.
+    #[serde(default)]
+    pub img: Option<Img>,
+}
+
+/// Image source for an `img` node. Keys mirror the Kitty graphics protocol so
+/// the same source description works in both places:
+///   * `f` — format: 100 = PNG/encoded (default), 32 = RGBA, 24 = RGB
+///   * `t` — transmission: `"d"` = direct base64 in `d`, `"f"` = file `path`
+///   * `s` / `v` — pixel width / height (required for raw `f=32`/`f=24`)
+///   * `d` — base64 payload (Kitty's APC data)
+///   * `path` — filesystem path (for `t=f`)
+/// Transmission defaults to direct when `d` is present, file when `path` is.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct Img {
+    #[serde(rename = "f", default)]
+    pub format: Option<u32>,
+    #[serde(rename = "t", default)]
+    pub transmission: Option<String>,
+    #[serde(rename = "s", default)]
+    pub data_width: Option<u32>,
+    #[serde(rename = "v", default)]
+    pub data_height: Option<u32>,
+    #[serde(rename = "d", default)]
+    pub data: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// A component invocation's prop value. For ergonomics, a bare string is

@@ -7,6 +7,10 @@
 // strings: a minimap or heatmap is a repetitive grid that's far clearer to
 // generate in a loop.
 
+use std::io::Cursor;
+
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 
 pub struct Demo {
@@ -24,7 +28,150 @@ pub fn generated_demos() -> Vec<Demo> {
         contribution_heatmap(),
         bar_chart(),
         chat_bubbles(),
+        wikipedia_article(),
+        profile_card(),
+        image_gallery(),
     ]
+}
+
+/// A Wikipedia-style article: a title, wrapping prose in a text column, and a
+/// bordered image infobox with a real (public-domain) JPEG and caption. Merges
+/// the Markdown renderer with the `img` node — proportional text, an embedded
+/// photograph, and multi-column layout in one terminal widget. The asset is
+/// embedded at compile time so the demo stays self-contained.
+fn wikipedia_article() -> Demo {
+    const PHOTO: &[u8] = include_bytes!("../demo/assets/charros.jpg");
+    let b64 = STANDARD.encode(PHOTO);
+
+    let head = "#e6edf3";
+    let body = "#c9d1d9";
+    let muted = "#8b949e";
+    let sans = "twp-sans";
+    let sans_b = "twp-sans-b";
+
+    let title = json!({"n":"text","t":"Charrería","s":{"color":head,"font-size":24,"font-family":sans_b,"letter-spacing":"0px"}});
+    let divider = json!({"n":"box","s":{"width":"100%","height":1,"background":"#30363d"}});
+
+    // Left column: wrapping prose (the text node wraps to the column width).
+    let lead = json!({"n":"text","t":"Charrería is a competitive equestrian sport that originated in Mexico. It grew out of the everyday work of charros — ranch horsemen — and is widely regarded as the country's national sport.","s":{"color":body,"font-size":14,"font-family":sans,"letter-spacing":"0px"}});
+    let h2 = json!({"n":"text","t":"Heritage","s":{"color":head,"font-size":17,"font-family":sans_b,"letter-spacing":"0px"}});
+    let para = json!({"n":"text","t":"In 2016 UNESCO inscribed charrería on the Representative List of the Intangible Cultural Heritage of Humanity, recognising its place in Mexican identity and rural tradition.","s":{"color":body,"font-size":13,"font-family":sans,"letter-spacing":"0px"}});
+    let left = json!({"n":"flex","s":{"flex-direction":"column","gap":9,"width":"54%"},"c":[lead, h2, para]});
+
+    // Right column: a bordered infobox with the photograph and its caption.
+    let photo = json!({"n":"img","s":{"width":226,"height":142,"border-radius":4},"img":{"d":b64}});
+    let cap1 = json!({"n":"text","t":"Mexican Charros Roping a Bull","s":{"color":body,"font-size":11,"font-family":sans,"letter-spacing":"0px"}});
+    let cap2 = json!({"n":"text","t":"Oil painting · public domain","s":{"color":muted,"font-size":10,"font-family":sans,"letter-spacing":"0px"}});
+    let infobox = json!({"n":"flex","s":{"flex-direction":"column","gap":5,"padding":10,"width":250,"background":"#161b22","border-radius":6,"border":{"width":1,"color":"#30363d"}},"c":[photo, cap1, cap2]});
+
+    let content = json!({"n":"flex","s":{"flex-direction":"row","gap":18,"align-items":"start","width":"100%"},"c":[left, infobox]});
+
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"column","gap":12,"padding":22,"width":"100%","height":"100%","background":"#0d1117"},
+        "c":[title, divider, content]
+    }});
+
+    Demo { name: "app_wikipedia", category: "mini-app", cols: 78, rows: 20, scene }
+}
+
+/// A deterministic diagonal-gradient PNG, base64-encoded — stand-in artwork
+/// for the `img` demos so they stay self-contained (no external files).
+fn gradient_png_b64(w: u32, h: u32, c0: [u8; 3], c1: [u8; 3]) -> String {
+    let mut img = image::RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let t = (x as f32 / w as f32 + y as f32 / h as f32) * 0.5;
+            let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+            img.put_pixel(
+                x,
+                y,
+                image::Rgba([mix(c0[0], c1[0]), mix(c0[1], c1[1]), mix(c0[2], c1[2]), 255]),
+            );
+        }
+    }
+    let mut buf = Cursor::new(Vec::new());
+    img.write_to(&mut buf, image::ImageFormat::Png)
+        .expect("png encode");
+    STANDARD.encode(buf.into_inner())
+}
+
+/// An `img` node carrying inline base64 PNG data (Kitty `t=d`).
+fn img_node(b64: String, w: u32, h: u32, radius: u32) -> Value {
+    json!({
+        "n":"img",
+        "s":{"width":w,"height":h,"border-radius":radius},
+        "img":{"d":b64}
+    })
+}
+
+/// A profile card: a circular avatar image beside proportional name/role text
+/// and a row of skill pills — img + flex + mono + sans text together.
+fn profile_card() -> Demo {
+    let avatar = img_node(gradient_png_b64(96, 96, [124, 58, 237], [34, 211, 238]), 72, 72, 36);
+
+    let name = json!({"n":"text","t":"Ada Lovelace","s":{"color":"#f1f5f9","font-size":18,"font-family":"twp-sans-b","letter-spacing":"0px"}});
+    let role = json!({"n":"text","t":"Systems Engineer","s":{"color":"#94a3b8","font-size":14,"font-family":"twp-sans","letter-spacing":"0px"}});
+    let pill = |t: &str, bg: &str| {
+        json!({"n":"flex","s":{"justify-content":"center","align-items":"center","background":bg,"border-radius":8,"padding":4},
+               "c":[json!({"n":"mono","t":t,"s":{"color":"#0f172a","font-weight":"bold"}})]})
+    };
+    let pills = json!({"n":"flex","s":{"flex-direction":"row","gap":6},"c":[pill(" Rust ", "#fbbf24"), pill(" TUI ", "#34d399")]});
+    let info = json!({"n":"flex","s":{"flex-direction":"column","gap":5},"c":[name, role, pills]});
+
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"row","align-items":"center","gap":14,"padding":16,"width":"100%","height":"100%","background":"#1e293b","border-radius":14},
+        "c":[avatar, info]
+    }});
+
+    Demo { name: "app_profile_card", category: "mini-app", cols: 34, rows: 6, scene }
+}
+
+/// An image gallery: a row of rounded thumbnails of real photographs, each
+/// credited to its photographer. Images are free under the Unsplash License
+/// (see demo/assets/CREDITS.md) and embedded at compile time.
+fn image_gallery() -> Demo {
+    let sans = "twp-sans";
+    let sans_b = "twp-sans-b";
+    // (embedded JPEG, photographer) — free Unsplash License, attributed.
+    let tiles: [(&[u8], &str); 4] = [
+        (
+            include_bytes!("../demo/assets/unsplash_pietro_de_grandi.jpg"),
+            "Pietro De Grandi",
+        ),
+        (
+            include_bytes!("../demo/assets/unsplash_simon_berger.jpg"),
+            "Simon Berger",
+        ),
+        (
+            include_bytes!("../demo/assets/unsplash_daniela_kokina.jpg"),
+            "Daniela Kokina",
+        ),
+        (
+            include_bytes!("../demo/assets/unsplash_sven_pieren.jpg"),
+            "Sven Pieren",
+        ),
+    ];
+    let cells: Vec<Value> = tiles
+        .iter()
+        .map(|(bytes, who)| {
+            let thumb = img_node(STANDARD.encode(bytes), 124, 82, 8);
+            let name = json!({"n":"text","t":*who,"s":{"color":"#cbd5e1","font-size":11,"font-family":sans,"letter-spacing":"0px"}});
+            let credit = json!({"n":"text","t":"Unsplash","s":{"color":"#64748b","font-size":9,"font-family":sans,"letter-spacing":"0px"}});
+            json!({"n":"flex","s":{"flex-direction":"column","gap":3,"align-items":"start","width":124},"c":[thumb, name, credit]})
+        })
+        .collect();
+    let strip = json!({"n":"flex","s":{"flex-direction":"row","gap":12},"c":cells});
+    let title = json!({"n":"text","t":"Mountain landscapes","s":{"color":"#f1f5f9","font-size":16,"font-family":sans_b,"letter-spacing":"0px"}});
+
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"column","gap":10,"padding":16,"width":"100%","height":"100%","background":"#0f172a"},
+        "c":[title, strip]
+    }});
+
+    Demo { name: "app_gallery", category: "mini-app", cols: 66, rows: 9, scene }
 }
 
 /// A rendered Markdown document: heading hierarchy at real, different font

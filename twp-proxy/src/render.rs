@@ -8,12 +8,15 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use image::RgbaImage;
 use parley::{FontFeature, setting::Tag};
 use takumi::{
     GlobalContext,
     layout::{
         Viewport,
-        node::Node as TakumiNode,
+        node::{ImageData, Node as TakumiNode},
         style::{
             AlignItems, Color, ColorInput, Display, FlexDirection, FontFamily, FontSize,
             FontWeight as TkFW, FromCss, JustifyContent, Length, LengthDefaultsToZero, SpacePair,
@@ -24,7 +27,7 @@ use takumi::{
     resources::font::FontResource,
 };
 
-use crate::protocol::{Border, Dimension, FontWeight, Node};
+use crate::protocol::{Border, Dimension, FontWeight, Img, Node};
 
 /// Fallback render resolution per cell when the terminal doesn't report
 /// pixel dimensions via TIOCGWINSZ.
@@ -370,6 +373,65 @@ pub fn render_to_png(scene: &Node, cols: u32, rows: u32) -> Vec<u8> {
     buf
 }
 
+/// Raw bytes for an `img` node, decoded from base64 (`t=d`) or read from a
+/// file (`t=f`). Returns None if no source resolves.
+fn img_source_bytes(img: &Img) -> Option<Vec<u8>> {
+    let medium = img.transmission.as_deref().unwrap_or(if img.data.is_some() {
+        "d"
+    } else {
+        "f"
+    });
+    match medium {
+        "d" => STANDARD.decode(img.data.as_deref()?.trim()).ok(),
+        "f" => std::fs::read(img.path.as_deref()?).ok(),
+        _ => None,
+    }
+}
+
+/// Build a takumi image node from an `img` node's Kitty-style source. PNG/
+/// encoded formats are decoded by takumi; raw RGBA/RGB are wrapped directly.
+/// On any failure the node degrades to an empty styled box so the surrounding
+/// widget still renders.
+fn build_img(node: &Node, style: TkStyle) -> TakumiNode {
+    let Some(img) = &node.img else {
+        return TakumiNode::container(vec![]).with_style(style);
+    };
+    let Some(bytes) = img_source_bytes(img) else {
+        eprintln!("twp-proxy: img node has no resolvable source");
+        return TakumiNode::container(vec![]).with_style(style);
+    };
+
+    let format = img.format.unwrap_or(100);
+    let data: Option<ImageData> = match format {
+        // Raw RGBA pixels.
+        32 => match (img.data_width, img.data_height) {
+            (Some(w), Some(h)) => RgbaImage::from_raw(w, h, bytes).map(ImageData::from),
+            _ => None,
+        },
+        // Raw RGB pixels — expand to RGBA.
+        24 => match (img.data_width, img.data_height) {
+            (Some(w), Some(h)) => {
+                let mut rgba = Vec::with_capacity(bytes.len() / 3 * 4);
+                for px in bytes.chunks_exact(3) {
+                    rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+                }
+                RgbaImage::from_raw(w, h, rgba).map(ImageData::from)
+            }
+            _ => None,
+        },
+        // PNG or any other encoded format — takumi decodes the buffer.
+        _ => Some(ImageData::from(bytes)),
+    };
+
+    match data {
+        Some(d) => TakumiNode::image(d).with_style(style),
+        None => {
+            eprintln!("twp-proxy: img node has invalid pixel data (f={format})");
+            TakumiNode::container(vec![]).with_style(style)
+        }
+    }
+}
+
 fn to_takumi(node: &Node) -> TakumiNode {
     let style = build_style(node);
     match node.n.as_str() {
@@ -378,6 +440,7 @@ fn to_takumi(node: &Node) -> TakumiNode {
             TakumiNode::text(text).with_style(style)
         }
         "mono" => build_mono(node),
+        "img" => build_img(node, style),
         // "flex", "box", or anything not text (including unfilled-component
         // placeholders). Layout differences are encoded via the `display`
         // declaration applied in build_style.

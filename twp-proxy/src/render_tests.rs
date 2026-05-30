@@ -32,6 +32,13 @@ mod tests {
         image::load_from_memory(&png).unwrap().to_rgba8()
     }
 
+    fn render_payload(json: &str, cols: u32, rows: u32) -> RgbaImage {
+        let payload: Payload = serde_json::from_str(json).unwrap();
+        let scene = expand(payload.scene.unwrap(), &payload.defs);
+        let png = render_to_png(&scene, cols, rows);
+        image::load_from_memory(&png).unwrap().to_rgba8()
+    }
+
     /// For each cell column, count non-background pixels in that column.
     /// Returns a vec indexed by cell index, each entry = count of "ink" pixels.
     fn ink_per_cell(img: &RgbaImage, cell_w: u32, num_cells: u32) -> Vec<u32> {
@@ -341,6 +348,32 @@ mod tests {
             bogus.as_raw(),
             "unknown CSS property should be ignored, leaving render unchanged"
         );
+    }
+
+    // ─── img node (Kitty-compatible image source) ───────────────────
+
+    #[test]
+    fn img_raw_rgba_renders_pixels() {
+        use base64::Engine;
+        // A 2×2 solid-red RGBA buffer, transmitted directly (Kitty t=d, f=32).
+        let raw: Vec<u8> = vec![
+            255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+        ];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+        let json = format!(
+            "{{\"S\":{{\"n\":\"img\",\"s\":{{\"width\":30,\"height\":30}},\"img\":{{\"f\":32,\"s\":2,\"v\":2,\"d\":\"{b64}\"}}}}}}"
+        );
+        let img = render_payload(&json, 4, 4);
+        let has_red = img.pixels().any(|p| p[0] > 200 && p[1] < 80 && p[2] < 80);
+        assert!(has_red, "raw-RGBA img node should render red pixels");
+    }
+
+    #[test]
+    fn img_missing_source_degrades_without_panic() {
+        // No `d`/`path` — must not panic, just renders nothing for the node.
+        let json = "{\"S\":{\"n\":\"img\",\"s\":{\"width\":20,\"height\":20}}}";
+        let img = render_payload(json, 3, 3);
+        assert!(img.width() > 0 && img.height() > 0);
     }
 
     // ─── Property-based tests ───────────────────────────────────────

@@ -7,8 +7,6 @@
 // strings: a minimap or heatmap is a repetitive grid that's far clearer to
 // generate in a loop.
 
-use std::io::Cursor;
-
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
@@ -31,7 +29,67 @@ pub fn generated_demos() -> Vec<Demo> {
         wikipedia_article(),
         profile_card(),
         image_gallery(),
+        diff_review(),
     ]
+}
+
+/// A code-review diff: a syntax-tinted hunk (added / removed / context lines,
+/// GitHub-dark colours) with an inline review comment — a real avatar
+/// (Grace Hopper's public-domain Navy portrait) beside a message bubble that
+/// casts a drop shadow.
+fn diff_review() -> Demo {
+    const AVATAR: &[u8] = include_bytes!("../demo/assets/grace_hopper.jpg");
+    let code_fg = "#adbac7";
+    let sans = "twp-sans";
+    let sans_b = "twp-sans-b";
+
+    // (gutter, kind, sign, code)
+    let lines: Vec<(&str, &str, &str, &str)> = vec![
+        ("41", "ctx", " ", "fn px_per_col() -> u32 {"),
+        ("42", "del", "-", "    CELL_PX.get().map(|c| c.0).unwrap_or(20)"),
+        ("42", "add", "+", "    CELL_PX.get().map(|c| c.0).unwrap_or(DEFAULT_PX_PER_COL)"),
+        ("43", "ctx", " ", "}"),
+    ];
+    let diff_rows: Vec<Value> = lines
+        .iter()
+        .map(|(gutter, kind, sign, code)| {
+            let (bg, sign_color) = match *kind {
+                "add" => ("#12261c", "#3fb950"),
+                "del" => ("#2d1214", "#f85149"),
+                _ => ("#0d1117", "#6e7681"),
+            };
+            json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":10,"width":"100%","background":bg,"padding":2},"c":[
+                json!({"n":"mono","t":gutter,"s":{"color":"#6e7681"}}),
+                json!({"n":"flex","s":{"flex-direction":"row"},"c":[
+                    json!({"n":"mono","t":sign,"s":{"color":sign_color,"font-weight":"bold"}}),
+                    json!({"n":"mono","t":code,"s":{"color":code_fg}})
+                ]})
+            ]})
+        })
+        .collect();
+
+    let file_header = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","padding":6,"background":"#161b22","border-radius":6},"c":[
+        json!({"n":"mono","t":"src/render.rs","s":{"color":"#adbac7"}})
+    ]});
+    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":1,"padding":4,"background":"#0d1117","border-radius":6,"border":{"width":1,"color":"#30363d"}},"c":diff_rows});
+
+    // Inline review comment: avatar + shadowed bubble.
+    let avatar = img_node(STANDARD.encode(AVATAR), 36, 36, 18);
+    let author = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":6},"c":[
+        json!({"n":"text","t":"Grace Hopper","s":{"color":"#f0f6fc","font-size":13,"font-family":sans_b,"letter-spacing":"0px"}}),
+        json!({"n":"text","t":"reviewed 2h ago","s":{"color":"#8b949e","font-size":11,"font-family":sans,"letter-spacing":"0px"}})
+    ]});
+    let comment_text = json!({"n":"text","t":"Good — a named constant beats a magic number. Ship it.","s":{"color":"#c9d1d9","font-size":13,"font-family":sans,"letter-spacing":"0px"}});
+    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":5,"padding":10,"background":"#21262d","border-radius":10,"box-shadow":"0 6px 16px #00000088","max-width":"82%"},"c":[author, comment_text]});
+    let comment = json!({"n":"flex","s":{"flex-direction":"row","align-items":"start","gap":10,"width":"100%"},"c":[avatar, bubble]});
+
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"column","gap":12,"padding":18,"width":"100%","height":"100%","background":"#0d1117"},
+        "c":[file_header, diff_box, comment]
+    }});
+
+    Demo { name: "app_diff_review", category: "mini-app", cols: 74, rows: 16, scene }
 }
 
 /// A Wikipedia-style article: a title, wrapping prose in a text column, and a
@@ -75,27 +133,6 @@ fn wikipedia_article() -> Demo {
     Demo { name: "app_wikipedia", category: "mini-app", cols: 78, rows: 20, scene }
 }
 
-/// A deterministic diagonal-gradient PNG, base64-encoded — stand-in artwork
-/// for the `img` demos so they stay self-contained (no external files).
-fn gradient_png_b64(w: u32, h: u32, c0: [u8; 3], c1: [u8; 3]) -> String {
-    let mut img = image::RgbaImage::new(w, h);
-    for y in 0..h {
-        for x in 0..w {
-            let t = (x as f32 / w as f32 + y as f32 / h as f32) * 0.5;
-            let mix = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
-            img.put_pixel(
-                x,
-                y,
-                image::Rgba([mix(c0[0], c1[0]), mix(c0[1], c1[1]), mix(c0[2], c1[2]), 255]),
-            );
-        }
-    }
-    let mut buf = Cursor::new(Vec::new());
-    img.write_to(&mut buf, image::ImageFormat::Png)
-        .expect("png encode");
-    STANDARD.encode(buf.into_inner())
-}
-
 /// An `img` node carrying inline base64 PNG data (Kitty `t=d`).
 fn img_node(b64: String, w: u32, h: u32, radius: u32) -> Value {
     json!({
@@ -105,18 +142,20 @@ fn img_node(b64: String, w: u32, h: u32, radius: u32) -> Value {
     })
 }
 
-/// A profile card: a circular avatar image beside proportional name/role text
-/// and a row of skill pills — img + flex + mono + sans text together.
+/// A profile card: a circular avatar (Ada Lovelace's public-domain portrait)
+/// beside proportional name/role text and a row of skill pills — img + flex +
+/// mono + sans text together.
 fn profile_card() -> Demo {
-    let avatar = img_node(gradient_png_b64(96, 96, [124, 58, 237], [34, 211, 238]), 72, 72, 36);
+    const PORTRAIT: &[u8] = include_bytes!("../demo/assets/ada_lovelace.jpg");
+    let avatar = img_node(STANDARD.encode(PORTRAIT), 72, 72, 36);
 
     let name = json!({"n":"text","t":"Ada Lovelace","s":{"color":"#f1f5f9","font-size":18,"font-family":"twp-sans-b","letter-spacing":"0px"}});
-    let role = json!({"n":"text","t":"Systems Engineer","s":{"color":"#94a3b8","font-size":14,"font-family":"twp-sans","letter-spacing":"0px"}});
+    let role = json!({"n":"text","t":"Mathematician · first programmer","s":{"color":"#94a3b8","font-size":14,"font-family":"twp-sans","letter-spacing":"0px"}});
     let pill = |t: &str, bg: &str| {
         json!({"n":"flex","s":{"justify-content":"center","align-items":"center","background":bg,"border-radius":8,"padding":4},
                "c":[json!({"n":"mono","t":t,"s":{"color":"#0f172a","font-weight":"bold"}})]})
     };
-    let pills = json!({"n":"flex","s":{"flex-direction":"row","gap":6},"c":[pill(" Rust ", "#fbbf24"), pill(" TUI ", "#34d399")]});
+    let pills = json!({"n":"flex","s":{"flex-direction":"row","gap":6},"c":[pill(" Algorithms ", "#fbbf24"), pill(" 1843 ", "#34d399")]});
     let info = json!({"n":"flex","s":{"flex-direction":"column","gap":5},"c":[name, role, pills]});
 
     let scene = json!({"S":{

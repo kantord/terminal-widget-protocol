@@ -75,6 +75,7 @@ pub fn generate_html(
                 "flex-mono" => "Flex + mono (manual text reference)",
                 "flex-nested" => "Nested flex (tables / dashboards)",
                 "css-effects" => "CSS text effects (no terminal equivalent)",
+                "mini-ui" => "Mini UIs (flex + mono + effects)",
                 other => other,
             };
             html.push_str(&format!(
@@ -82,7 +83,7 @@ pub fn generate_html(
             ));
         }
 
-        let showcase = entry.category == "css-effects";
+        let showcase = entry.category == "css-effects" || entry.category == "mini-ui";
         let summary = entry.result.summary();
         let status_word = summary.split_whitespace().next().unwrap_or("SKIP");
         let status_class = match status_word {

@@ -607,6 +607,13 @@ fn build_style(node: &Node) -> TkStyle {
         style = style.with(StyleDeclaration::letter_spacing(Length::Px(spacing)));
     }
 
+    // CSS passthrough: any property outside the typed vocabulary (box-shadow,
+    // background gradients, opacity, filter, …) applies to flex/box/text nodes
+    // here, just as it does per-glyph for mono.
+    for decl in css_passthrough_decls(&s.extra) {
+        style = style.with(decl);
+    }
+
     style
 }
 

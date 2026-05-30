@@ -297,35 +297,74 @@ const TESTS: &[TestCase] = &[
 struct Showcase {
     name: &'static str,
     twp_cmd: &'static str,
+    category: &'static str,
 }
 
 const SHOWCASE: &[Showcase] = &[
+    // ── Text effects ──────────────────────────────────────────────
     // Drop shadow — offset, blurred, dark.
     Showcase {
         name: "fx_drop_shadow",
         twp_cmd: "printf '\\x1b_twp;v=1,c=14,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"SHADOW\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\",\"text-shadow\":\"3px 3px 4px #000000\"}}}\\x1b\\\\'",
+        category: "css-effects",
     },
     // Neon glow — zero-offset coloured blur behind a bright glyph.
     Showcase {
         name: "fx_neon_glow",
         twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"NEON\",\"s\":{\"scale\":2,\"color\":\"#7df9ff\",\"background\":\"#0a1e24\",\"text-shadow\":\"0 0 8px #00e5ff\"}}}\\x1b\\\\'",
+        category: "css-effects",
     },
     // Outline only — fill matches the background, a coloured stroke draws
     // the glyph edges.
     Showcase {
         name: "fx_outline",
         twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"EDGE\",\"s\":{\"scale\":2,\"color\":\"#0a1e24\",\"background\":\"#0a1e24\",\"-webkit-text-stroke\":\"1px #ff5fa2\"}}}\\x1b\\\\'",
+        category: "css-effects",
     },
     // Opacity — faded text.
     Showcase {
         name: "fx_opacity",
         twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"FADE\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\",\"opacity\":0.35}}}\\x1b\\\\'",
+        category: "css-effects",
     },
     // Coloured underline — decoration in a different colour from the text
     // (takumi only supports solid style; longhands, not the shorthand).
     Showcase {
         name: "fx_colored_underline",
         twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"LINK\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\",\"text-decoration-line\":\"underline\",\"text-decoration-color\":\"#ff5fa2\"}}}\\x1b\\\\'",
+        category: "css-effects",
+    },
+
+    // ── Mini UIs: styled flex containers + mono text + effects ─────
+    // Status pill — rounded green badge with bold white label.
+    Showcase {
+        name: "ui_status_pill",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=16,r=3;{\"S\":{\"n\":\"flex\",\"s\":{\"justify-content\":\"center\",\"align-items\":\"center\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\",\"padding\":8},\"c\":[{\"n\":\"flex\",\"s\":{\"justify-content\":\"center\",\"align-items\":\"center\",\"background\":\"#16a34a\",\"border-radius\":14,\"padding\":6},\"c\":[{\"n\":\"mono\",\"t\":\" ONLINE \",\"s\":{\"color\":\"#ffffff\",\"font-weight\":\"bold\"}}]}]}}\\x1b\\\\'",
+        category: "mini-ui",
+    },
+    // Raised button — indigo card with a soft drop shadow under it.
+    Showcase {
+        name: "ui_button_shadow",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=18,r=4;{\"S\":{\"n\":\"flex\",\"s\":{\"justify-content\":\"center\",\"align-items\":\"center\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\",\"padding\":12},\"c\":[{\"n\":\"flex\",\"s\":{\"justify-content\":\"center\",\"align-items\":\"center\",\"background\":\"#6366f1\",\"border-radius\":10,\"padding\":8,\"box-shadow\":\"0 5px 12px #000000aa\"},\"c\":[{\"n\":\"mono\",\"t\":\" DEPLOY \",\"s\":{\"color\":\"#ffffff\",\"font-weight\":\"bold\"}}]}]}}\\x1b\\\\'",
+        category: "mini-ui",
+    },
+    // Toast — card with a coloured accent bar, title and subtitle.
+    Showcase {
+        name: "ui_toast",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=26,r=4;{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#1e293b\",\"border-radius\":8},\"c\":[{\"n\":\"box\",\"s\":{\"width\":6,\"height\":\"100%%\",\"background\":\"#22c55e\",\"border-radius\":8}},{\"n\":\"flex\",\"s\":{\"flex-direction\":\"column\",\"justify-content\":\"center\",\"padding\":8,\"gap\":2},\"c\":[{\"n\":\"mono\",\"t\":\"Deployed\",\"s\":{\"color\":\"#ecefc1\",\"font-weight\":\"bold\"}},{\"n\":\"mono\",\"t\":\"2 min ago\",\"s\":{\"color\":\"#94a3b8\"}}]}]}}\\x1b\\\\'",
+        category: "mini-ui",
+    },
+    // Progress bar — rounded track with a 60%% cyan fill.
+    Showcase {
+        name: "ui_progress",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=26,r=3;{\"S\":{\"n\":\"flex\",\"s\":{\"align-items\":\"center\",\"width\":\"100%%\",\"height\":\"100%%\",\"background\":\"#0a1e24\",\"padding\":10},\"c\":[{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"align-items\":\"center\",\"width\":\"100%%\",\"height\":14,\"background\":\"#1e293b\",\"border-radius\":7},\"c\":[{\"n\":\"box\",\"s\":{\"width\":\"60%%\",\"height\":\"100%%\",\"background\":\"#38bdf8\",\"border-radius\":7}}]}]}}\\x1b\\\\'",
+        category: "mini-ui",
+    },
+    // Gradient banner — linear-gradient background with shadowed label.
+    Showcase {
+        name: "ui_gradient_banner",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=22,r=3;{\"S\":{\"n\":\"flex\",\"s\":{\"justify-content\":\"center\",\"align-items\":\"center\",\"width\":\"100%%\",\"height\":\"100%%\",\"border-radius\":12,\"background-image\":\"linear-gradient(90deg,#6366f1,#ec4899)\"},\"c\":[{\"n\":\"mono\",\"t\":\"GRADIENT\",\"s\":{\"color\":\"#ffffff\",\"font-weight\":\"bold\",\"text-shadow\":\"0 1px 3px #00000088\"}}]}}\\x1b\\\\'",
+        category: "mini-ui",
     },
 ];
 
@@ -619,9 +658,18 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
         });
     }
 
-    // ── Showcase: render-only CSS effects (no comparison) ──────────
-    eprintln!("── CSS text effects (visual only) ──");
+    // ── Showcase: render-only effects & widgets (no comparison) ────
+    let mut showcase_category = "";
     for sc in SHOWCASE {
+        if sc.category != showcase_category {
+            showcase_category = sc.category;
+            let label = match showcase_category {
+                "css-effects" => "CSS text effects (visual only)",
+                "mini-ui" => "Mini UIs (visual only)",
+                other => other,
+            };
+            eprintln!("── {label} ──");
+        }
         eprint!("  {}: ", sc.name);
         let cfg_sc = CaptureConfig {
             output: cfg.results_dir.join(format!("twp_{}.png", sc.name)),
@@ -651,7 +699,7 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
                     },
                     native_png: None,
                     twp_png: Some(png),
-                    category: "css-effects".to_string(),
+                    category: sc.category.to_string(),
                     native_label: "(no terminal equivalent)".to_string(),
                 });
             }
@@ -668,7 +716,7 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
                     },
                     native_png: None,
                     twp_png: None,
-                    category: "css-effects".to_string(),
+                    category: sc.category.to_string(),
                     native_label: "(no terminal equivalent)".to_string(),
                 });
             }

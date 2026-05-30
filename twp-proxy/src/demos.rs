@@ -38,17 +38,22 @@ fn markdown_doc() -> Demo {
     let accent = "#58a6ff";
     let str_c = "#a5d6ff";
     let fn_c = "#d2a8ff";
+    // Proportional family registered by the renderer (falls back to a system
+    // sans if unavailable). letter-spacing:0 neutralises the mono cell-grid
+    // tuning that build_style applies to every text node.
+    let sans = "twp-sans";
+    let sans_b = "twp-sans-b";
 
-    let h1 = json!({"n":"text","t":"Terminal Widget Protocol","s":{"color":head,"font-size":26,"font-weight":"bold"}});
-    let lede = json!({"n":"text","t":"Render rich UI inline in your terminal — real font sizes, colour, and layout.","s":{"color":body,"font-size":15}});
+    let h1 = json!({"n":"text","t":"Terminal Widget Protocol","s":{"color":head,"font-size":26,"font-family":sans_b,"letter-spacing":"0px"}});
+    let lede = json!({"n":"text","t":"Render rich UI inline in your terminal — real font sizes, colour, and layout.","s":{"color":body,"font-size":15,"font-family":sans,"letter-spacing":"0px"}});
 
-    let h2 = json!({"n":"text","t":"Features","s":{"color":head,"font-size":18,"font-weight":"bold"}});
+    let h2 = json!({"n":"text","t":"Features","s":{"color":head,"font-size":18,"font-family":sans_b,"letter-spacing":"0px"}});
     let divider = json!({"n":"box","s":{"width":"100%","height":1,"background":"#30363d"}});
 
     let bullet = |s: &str| {
         json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":8},"c":[
             json!({"n":"box","s":{"width":5,"height":5,"border-radius":3,"background":accent}}),
-            json!({"n":"text","t":s,"s":{"color":body,"font-size":14}})
+            json!({"n":"text","t":s,"s":{"color":body,"font-size":14,"font-family":sans,"letter-spacing":"0px"}})
         ]})
     };
     let bullets = json!({"n":"flex","s":{"flex-direction":"column","gap":6},"c":[
@@ -71,7 +76,7 @@ fn markdown_doc() -> Demo {
 
     let quote = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":10},"c":[
         json!({"n":"box","s":{"width":4,"height":18,"border-radius":2,"background":"#30363d"}}),
-        json!({"n":"text","t":"Note: pure software rendering — works over SSH, no GPU required.","s":{"color":muted,"font-size":13}})
+        json!({"n":"text","t":"Note: pure software rendering — works over SSH, no GPU required.","s":{"color":muted,"font-size":13,"font-family":sans,"letter-spacing":"0px"}})
     ]});
 
     let scene = json!({"S":{

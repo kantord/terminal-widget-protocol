@@ -68,6 +68,14 @@ const FAMILY_BOLD: &str = "twp-b";
 const FAMILY_ITALIC: &str = "twp-i";
 const FAMILY_BOLD_ITALIC: &str = "twp-bi";
 
+/// Optional proportional (sans-serif) family. Unlike the terminal mono font,
+/// this is only used when a node explicitly asks for it via
+/// `font-family: twp-sans` / `twp-sans-b` (e.g. the Markdown demo's prose and
+/// headings, where mono looks wrong). Registered best-effort from
+/// `fc-match sans-serif`; absent it, parley falls back to a system face.
+pub const FAMILY_SANS: &str = "twp-sans";
+pub const FAMILY_SANS_BOLD: &str = "twp-sans-b";
+
 #[derive(Debug, Default)]
 struct FontSet {
     regular: Option<std::path::PathBuf>,
@@ -216,6 +224,14 @@ fn context() -> &'static GlobalContext {
             true,
             true,
         );
+
+        // Proportional family for prose/heading demos — best effort.
+        if let Some(p) = fc_match("sans-serif") {
+            load_variant(&mut ctx, Some(p.as_path()), FAMILY_SANS, false, false);
+        }
+        if let Some(p) = fc_match("sans-serif:bold") {
+            load_variant(&mut ctx, Some(p.as_path()), FAMILY_SANS_BOLD, true, false);
+        }
         ctx
     })
 }

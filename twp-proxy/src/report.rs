@@ -76,6 +76,7 @@ pub fn generate_html(
                 "flex-nested" => "Nested flex (tables / dashboards)",
                 "css-effects" => "CSS text effects (no terminal equivalent)",
                 "mini-ui" => "Mini UIs (flex + mono + effects)",
+                "mini-app" => "Mini apps (minimap, heatmap, charts, chat)",
                 other => other,
             };
             html.push_str(&format!(
@@ -83,7 +84,10 @@ pub fn generate_html(
             ));
         }
 
-        let showcase = entry.category == "css-effects" || entry.category == "mini-ui";
+        let showcase = matches!(
+            entry.category.as_str(),
+            "css-effects" | "mini-ui" | "mini-app"
+        );
         let summary = entry.result.summary();
         let status_word = summary.split_whitespace().next().unwrap_or("SKIP");
         let status_class = match status_word {

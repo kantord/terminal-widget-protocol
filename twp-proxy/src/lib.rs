@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod compare;
+pub mod demos;
 pub mod expand;
 pub mod kitty;
 pub mod parser;

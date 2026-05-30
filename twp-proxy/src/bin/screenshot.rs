@@ -6,7 +6,19 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use twp_proxy::compare::{self, CompareResult, TestStatus};
+use twp_proxy::demos;
 use twp_proxy::report::{self, TestEntry};
+
+/// Wrap a generated widget scene into the `printf` command that emits its
+/// TWP escape. The JSON is passed as a `%s` *argument*, not embedded in the
+/// format string, so printf does no backslash/`%` processing on it — the
+/// escaped quotes serde_json emits survive intact. Single quotes in the
+/// payload are escaped for the surrounding bash single-quoting (`'\''`), so
+/// the scene may contain any character.
+fn demo_twp_cmd(cols: u32, rows: u32, scene: &serde_json::Value) -> String {
+    let json = scene.to_string().replace('\'', "'\\''");
+    format!("printf '\\x1b_twp;v=1,c={cols},r={rows};%s\\x1b\\\\' '{json}'")
+}
 
 // ── Xvfb session ──────────────────────────────────────────────────
 
@@ -659,6 +671,70 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
     }
 
     // ── Showcase: render-only effects & widgets (no comparison) ────
+    let display = xvfb.display().to_string();
+
+    // Capture one render-only showcase widget and record it. Returns whether
+    // it rendered. `cols`/`rows` control the kitty window the widget renders
+    // into (bigger widgets need a bigger window).
+    let mut run_showcase = |name: &str,
+                            category: &str,
+                            twp_cmd: String,
+                            win_cols: u32,
+                            win_rows: u32|
+     -> bool {
+        eprint!("  {name}: ");
+        let cfg_sc = CaptureConfig {
+            output: cfg.results_dir.join(format!("twp_{name}.png")),
+            display: display.clone(),
+            proxy: Some(cfg.proxy_path.clone()),
+            font: cfg.font.clone(),
+            font_size: cfg.font_size.clone(),
+            cols: win_cols,
+            rows: win_rows,
+            bg: "#0a1e24".to_string(),
+            fg: "#ecefc1".to_string(),
+            class: "twp-screenshot".to_string(),
+            timeout: 15,
+            command: vec![twp_cmd],
+        };
+        match capture_one(&cfg_sc) {
+            Ok(png) => {
+                eprintln!("RENDERED");
+                entries.push(TestEntry {
+                    name: name.to_string(),
+                    result: CompareResult {
+                        status: TestStatus::Pass,
+                        matches: 0,
+                        total: 0,
+                        mismatches: vec![],
+                    },
+                    native_png: None,
+                    twp_png: Some(png),
+                    category: category.to_string(),
+                    native_label: "(no terminal equivalent)".to_string(),
+                });
+                true
+            }
+            Err(e) => {
+                eprintln!("FAIL ({e})");
+                entries.push(TestEntry {
+                    name: name.to_string(),
+                    result: CompareResult {
+                        status: TestStatus::Fail(format!("render failed: {e}")),
+                        matches: 0,
+                        total: 0,
+                        mismatches: vec![],
+                    },
+                    native_png: None,
+                    twp_png: None,
+                    category: category.to_string(),
+                    native_label: "(no terminal equivalent)".to_string(),
+                });
+                false
+            }
+        }
+    };
+
     let mut showcase_category = "";
     for sc in SHOWCASE {
         if sc.category != showcase_category {
@@ -670,56 +746,25 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             };
             eprintln!("── {label} ──");
         }
-        eprint!("  {}: ", sc.name);
-        let cfg_sc = CaptureConfig {
-            output: cfg.results_dir.join(format!("twp_{}.png", sc.name)),
-            display: xvfb.display().to_string(),
-            proxy: Some(cfg.proxy_path.clone()),
-            font: cfg.font.clone(),
-            font_size: cfg.font_size.clone(),
-            cols: 60,
-            rows: 10,
-            bg: "#0a1e24".to_string(),
-            fg: "#ecefc1".to_string(),
-            class: "twp-screenshot".to_string(),
-            timeout: 15,
-            command: vec![sc.twp_cmd.to_string()],
-        };
-        match capture_one(&cfg_sc) {
-            Ok(png) => {
-                eprintln!("RENDERED");
-                pass += 1;
-                entries.push(TestEntry {
-                    name: sc.name.to_string(),
-                    result: CompareResult {
-                        status: TestStatus::Pass,
-                        matches: 0,
-                        total: 0,
-                        mismatches: vec![],
-                    },
-                    native_png: None,
-                    twp_png: Some(png),
-                    category: sc.category.to_string(),
-                    native_label: "(no terminal equivalent)".to_string(),
-                });
-            }
-            Err(e) => {
-                eprintln!("FAIL ({e})");
-                fail += 1;
-                entries.push(TestEntry {
-                    name: sc.name.to_string(),
-                    result: CompareResult {
-                        status: TestStatus::Fail(format!("render failed: {e}")),
-                        matches: 0,
-                        total: 0,
-                        mismatches: vec![],
-                    },
-                    native_png: None,
-                    twp_png: None,
-                    category: sc.category.to_string(),
-                    native_label: "(no terminal equivalent)".to_string(),
-                });
-            }
+        // The static showcases fit comfortably in a 60×10 window.
+        if run_showcase(sc.name, sc.category, sc.twp_cmd.to_string(), 60, 10) {
+            pass += 1;
+        } else {
+            fail += 1;
+        }
+    }
+
+    // Generated "mini-app" demos (code+minimap, heatmap, chart, chat).
+    eprintln!("── Mini apps (visual only) ──");
+    for demo in demos::generated_demos() {
+        let twp_cmd = demo_twp_cmd(demo.cols, demo.rows, &demo.scene);
+        // Render into a window a little larger than the widget so nothing
+        // is clipped at the edges.
+        let (win_c, win_r) = (demo.cols + 6, demo.rows + 4);
+        if run_showcase(demo.name, demo.category, twp_cmd, win_c, win_r) {
+            pass += 1;
+        } else {
+            fail += 1;
         }
     }
 

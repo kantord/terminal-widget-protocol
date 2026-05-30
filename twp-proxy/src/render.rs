@@ -24,7 +24,7 @@ use takumi::{
         },
     },
     rendering::{ImageOutputFormat, RenderOptions, measure_layout, render, write_image},
-    resources::font::FontResource,
+    resources::{font::FontResource, image::{ImageSource, SvgSource}},
 };
 
 use crate::protocol::{Border, Dimension, FontWeight, Img, Node};
@@ -472,6 +472,24 @@ fn build_stack(node: &Node) -> TakumiNode {
     TakumiNode::container(layers).with_style(container)
 }
 
+/// Build an `svg` node: the SVG markup lives in the node's `t` field (it's
+/// text, so it can go inline — a shell script can `printf` it). takumi parses
+/// and rasterizes it via resvg into the node's box. On parse failure the node
+/// degrades to an empty styled box.
+fn build_svg(node: &Node, style: TkStyle) -> TakumiNode {
+    let svg = node.t.as_deref().unwrap_or("");
+    match svg.parse::<SvgSource>() {
+        Ok(src) => {
+            let source: ImageSource = src.into();
+            TakumiNode::image(ImageData::from(source)).with_style(style)
+        }
+        Err(_) => {
+            eprintln!("twp-proxy: svg node failed to parse");
+            TakumiNode::container(vec![]).with_style(style)
+        }
+    }
+}
+
 fn to_takumi(node: &Node) -> TakumiNode {
     let style = build_style(node);
     match node.n.as_str() {
@@ -481,6 +499,7 @@ fn to_takumi(node: &Node) -> TakumiNode {
         }
         "mono" => build_mono(node),
         "img" => build_img(node, style),
+        "svg" => build_svg(node, style),
         "stack" => build_stack(node),
         // "flex", "box", or anything not text (including unfilled-component
         // placeholders). Layout differences are encoded via the `display`

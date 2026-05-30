@@ -77,6 +77,7 @@ pub fn generate_html(
                 "css-effects" => "CSS text effects (no terminal equivalent)",
                 "mini-ui" => "Mini UIs (flex + mono + effects)",
                 "mini-app" => "Mini apps (minimap, heatmap, charts, chat)",
+                "svg" => "Vector graphics (SVG — curves, arcs, gauges)",
                 other => other,
             };
             html.push_str(&format!(
@@ -86,7 +87,7 @@ pub fn generate_html(
 
         let showcase = matches!(
             entry.category.as_str(),
-            "css-effects" | "mini-ui" | "mini-app"
+            "css-effects" | "mini-ui" | "mini-app" | "svg"
         );
         let summary = entry.result.summary();
         let status_word = summary.split_whitespace().next().unwrap_or("SKIP");

@@ -30,7 +30,149 @@ pub fn generated_demos() -> Vec<Demo> {
         profile_card(),
         image_gallery(),
         diff_review(),
+        svg_line_chart(),
+        svg_donut(),
+        svg_gauge(),
     ]
+}
+
+/// An `svg` node carrying inline SVG markup (it's text — a shell script could
+/// `printf` this).
+fn svg_node(svg: String, w: u32, h: u32) -> Value {
+    json!({"n":"svg","t":svg,"s":{"width":w,"height":h}})
+}
+
+/// A line chart with an area-fill gradient and point markers — curves that
+/// flex/box fundamentally can't draw, described as SVG and rasterized by the
+/// terminal.
+fn svg_line_chart() -> Demo {
+    let data = [12.0, 28.0, 18.0, 41.0, 33.0, 54.0, 44.0, 62.0, 49.0, 68.0];
+    let (w, h, pad, maxv) = (300.0, 140.0, 10.0_f64, 75.0);
+    let n = data.len();
+    let dx = (w - 2.0 * pad) / (n as f64 - 1.0);
+    let pt = |i: usize, v: f64| -> (f64, f64) {
+        (pad + i as f64 * dx, h - pad - (v / maxv) * (h - 2.0 * pad))
+    };
+
+    let mut line = String::new();
+    let mut area = format!("M {:.1} {:.1}", pad, h - pad);
+    let mut dots = String::new();
+    for (i, &v) in data.iter().enumerate() {
+        let (x, y) = pt(i, v);
+        if i == 0 {
+            line.push_str(&format!("M {x:.1} {y:.1}"));
+        } else {
+            line.push_str(&format!(" L {x:.1} {y:.1}"));
+        }
+        area.push_str(&format!(" L {x:.1} {y:.1}"));
+        dots.push_str(&format!("<circle cx='{x:.1}' cy='{y:.1}' r='3' fill='#38bdf8'/>"));
+    }
+    area.push_str(&format!(" L {:.1} {:.1} Z", pad + (n as f64 - 1.0) * dx, h - pad));
+
+    let svg = format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {w} {h}'>\
+         <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>\
+         <stop offset='0' stop-color='#38bdf8' stop-opacity='0.45'/>\
+         <stop offset='1' stop-color='#38bdf8' stop-opacity='0'/></linearGradient></defs>\
+         <path d='{area}' fill='url(#g)'/>\
+         <path d='{line}' fill='none' stroke='#38bdf8' stroke-width='2.5' stroke-linejoin='round' stroke-linecap='round'/>\
+         {dots}</svg>"
+    );
+
+    let title = json!({"n":"text","t":"Latency p95 (ms)","s":{"color":"#e2e8f0","font-size":15,"font-family":"twp-sans-b","letter-spacing":"0px"}});
+    let chart = svg_node(svg, 300, 140);
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"column","gap":8,"padding":16,"width":"100%","height":"100%","background":"#0f172a"},
+        "c":[title, chart]
+    }});
+    Demo { name: "app_line_chart", category: "svg", cols: 40, rows: 9, scene }
+}
+
+/// A donut chart (arc segments) beside a flex legend — SVG drawing composed
+/// inside TWP layout, the web's HTML+SVG division.
+fn svg_donut() -> Demo {
+    let segs = [
+        ("Rust", 45.0, "#fb923c"),
+        ("Go", 25.0, "#38bdf8"),
+        ("Lua", 18.0, "#a78bfa"),
+        ("Other", 12.0, "#34d399"),
+    ];
+    let total: f64 = segs.iter().map(|s| s.1).sum();
+    let (cx, cy, r_out, r_in) = (60.0_f64, 60.0_f64, 52.0_f64, 30.0_f64);
+    let mut a = -std::f64::consts::FRAC_PI_2; // start at top
+
+    let mut paths = String::new();
+    for (_, v, color) in &segs {
+        let sweep = v / total * std::f64::consts::TAU;
+        let a1 = a + sweep;
+        let large = if sweep > std::f64::consts::PI { 1 } else { 0 };
+        let (x0, y0) = (cx + r_out * a.cos(), cy + r_out * a.sin());
+        let (x1, y1) = (cx + r_out * a1.cos(), cy + r_out * a1.sin());
+        let (xi1, yi1) = (cx + r_in * a1.cos(), cy + r_in * a1.sin());
+        let (xi0, yi0) = (cx + r_in * a.cos(), cy + r_in * a.sin());
+        paths.push_str(&format!(
+            "<path d='M {x0:.2} {y0:.2} A {r_out} {r_out} 0 {large} 1 {x1:.2} {y1:.2} \
+             L {xi1:.2} {yi1:.2} A {r_in} {r_in} 0 {large} 0 {xi0:.2} {yi0:.2} Z' fill='{color}'/>"
+        ));
+        a = a1;
+    }
+    let svg = format!("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'>{paths}</svg>");
+    let donut = svg_node(svg, 120, 120);
+
+    let legend_rows: Vec<Value> = segs
+        .iter()
+        .map(|(name, v, color)| {
+            json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":6},"c":[
+                json!({"n":"box","s":{"width":10,"height":10,"border-radius":3,"background":*color}}),
+                json!({"n":"mono","t":format!("{name}  {v:.0}%"),"s":{"color":"#cbd5e1"}})
+            ]})
+        })
+        .collect();
+    let legend = json!({"n":"flex","s":{"flex-direction":"column","gap":7,"justify-content":"center"},"c":legend_rows});
+
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"row","align-items":"center","gap":20,"padding":16,"width":"100%","height":"100%","background":"#0f172a"},
+        "c":[donut, legend]
+    }});
+    Demo { name: "app_donut", category: "svg", cols: 40, rows: 9, scene }
+}
+
+/// A speedometer-style gauge: a track arc, a value arc, and a needle — pure
+/// SVG arcs/rotation, impossible with boxes.
+fn svg_gauge() -> Demo {
+    let value = 0.72; // 0..1
+    let (cx, cy, r) = (70.0_f64, 70.0_f64, 56.0_f64);
+    // 180° sweep from left (180°) to right (0°), i.e. the top half.
+    let start = std::f64::consts::PI;
+    let end = start - value * std::f64::consts::PI;
+    let polar = |ang: f64| (cx + r * ang.cos(), cy - r * ang.sin());
+    let (tx0, ty0) = polar(std::f64::consts::PI);
+    let (tx1, ty1) = polar(0.0);
+    let (vx0, vy0) = polar(start);
+    let (vx1, vy1) = polar(end);
+    let large = if value > 0.5 { 0 } else { 0 }; // semicircle arcs, always 0
+    let (nx, ny) = {
+        let nr = r - 10.0;
+        (cx + nr * end.cos(), cy - nr * end.sin())
+    };
+    let svg = format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 140 90'>\
+         <path d='M {tx0:.1} {ty0:.1} A {r} {r} 0 {large} 1 {tx1:.1} {ty1:.1}' fill='none' stroke='#1e293b' stroke-width='12' stroke-linecap='round'/>\
+         <path d='M {vx0:.1} {vy0:.1} A {r} {r} 0 {large} 1 {vx1:.1} {vy1:.1}' fill='none' stroke='#34d399' stroke-width='12' stroke-linecap='round'/>\
+         <line x1='{cx}' y1='{cy}' x2='{nx:.1}' y2='{ny:.1}' stroke='#e2e8f0' stroke-width='3' stroke-linecap='round'/>\
+         <circle cx='{cx}' cy='{cy}' r='5' fill='#e2e8f0'/></svg>"
+    );
+    let gauge = svg_node(svg, 180, 116);
+    let label = json!({"n":"mono","t":"72%","s":{"color":"#34d399","font-weight":"bold"}});
+    let caption = json!({"n":"text","t":"Disk usage","s":{"color":"#94a3b8","font-size":13,"font-family":"twp-sans","letter-spacing":"0px"}});
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"column","align-items":"center","gap":4,"padding":14,"width":"100%","height":"100%","background":"#0f172a"},
+        "c":[gauge, label, caption]
+    }});
+    Demo { name: "app_gauge", category: "svg", cols: 30, rows: 9, scene }
 }
 
 /// A code-review diff: a syntax-tinted hunk (added / removed / context lines,

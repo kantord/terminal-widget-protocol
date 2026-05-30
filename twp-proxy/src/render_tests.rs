@@ -369,6 +369,24 @@ mod tests {
     }
 
     #[test]
+    fn svg_node_renders_vector() {
+        // A red circle — SVG markup inline in `t`, rasterized by resvg.
+        let json = "{\"S\":{\"n\":\"svg\",\"s\":{\"width\":40,\"height\":40},\
+            \"t\":\"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'>\
+            <circle cx='5' cy='5' r='5' fill='#ff0000'/></svg>\"}}";
+        let img = render_payload(json, 4, 4);
+        let has_red = img.pixels().any(|p| p[0] > 200 && p[1] < 80 && p[2] < 80);
+        assert!(has_red, "svg node should rasterize a red circle");
+    }
+
+    #[test]
+    fn svg_invalid_degrades_without_panic() {
+        let json = "{\"S\":{\"n\":\"svg\",\"s\":{\"width\":20,\"height\":20},\"t\":\"not svg\"}}";
+        let img = render_payload(json, 3, 3);
+        assert!(img.width() > 0 && img.height() > 0);
+    }
+
+    #[test]
     fn stack_paints_later_layer_on_top() {
         // Base layer fills red; top layer is a centered blue box. The centre
         // pixel must be blue (the upper layer), proving z-order + overlap.

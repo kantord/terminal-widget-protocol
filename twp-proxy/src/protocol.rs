@@ -110,6 +110,14 @@ pub struct Style {
     pub subscale_n: Option<u32>,
     #[serde(rename = "subscale-d")]
     pub subscale_d: Option<u32>,
+
+    /// Any style key not recognized above is collected here and passed
+    /// through to the renderer as a raw CSS `property: value` declaration.
+    /// This is how effects beyond the typed vocabulary — `text-shadow`,
+    /// `opacity`, `-webkit-text-stroke`, `text-decoration`, `filter`, etc.
+    /// — reach the rasterizer without per-property wiring.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// A length, either pixels (numeric) or a percentage string like `"50%"`.

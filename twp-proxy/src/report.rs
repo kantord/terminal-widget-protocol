@@ -74,6 +74,7 @@ pub fn generate_html(
                 "text-sizing" => "Text-sizing (OSC 66 vs TWP)",
                 "flex-mono" => "Flex + mono (manual text reference)",
                 "flex-nested" => "Nested flex (tables / dashboards)",
+                "css-effects" => "CSS text effects (no terminal equivalent)",
                 other => other,
             };
             html.push_str(&format!(
@@ -81,6 +82,7 @@ pub fn generate_html(
             ));
         }
 
+        let showcase = entry.category == "css-effects";
         let summary = entry.result.summary();
         let status_word = summary.split_whitespace().next().unwrap_or("SKIP");
         let status_class = match status_word {
@@ -89,15 +91,27 @@ pub fn generate_html(
             _ => "skip-bg",
         };
 
+        // Showcase entries have no comparison metric — show just the status.
+        let metrics = if showcase { String::new() } else {
+            format!("<p class=\"metrics\">{summary}</p>")
+        };
         html.push_str(&format!(
-            "<div class=\"test\">\n  <h2>{} <span class=\"status {status_class}\">{status_word}</span></h2>\n  <p class=\"metrics\">{summary}</p>\n  <div class=\"images\">\n",
+            "<div class=\"test\">\n  <h2>{} <span class=\"status {status_class}\">{status_word}</span></h2>\n  {metrics}\n  <div class=\"images\">\n",
             entry.name
         ));
 
-        for (label, png_data) in [
-            (&entry.native_label, &entry.native_png),
-            (&"TWP mono".to_string(), &entry.twp_png),
-        ] {
+        // Showcase: single TWP pane (no native reference). Otherwise the
+        // usual native-vs-TWP pair.
+        let twp_label = "TWP mono".to_string();
+        let panes: Vec<(&String, &Option<Vec<u8>>)> = if showcase {
+            vec![(&twp_label, &entry.twp_png)]
+        } else {
+            vec![
+                (&entry.native_label, &entry.native_png),
+                (&twp_label, &entry.twp_png),
+            ]
+        };
+        for (label, png_data) in panes {
             html.push_str(&format!("<div class=\"img-box\"><h3>{label}</h3>\n"));
             if let Some(data) = png_data {
                 let b64 = STANDARD.encode(data);

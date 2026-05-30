@@ -289,6 +289,46 @@ const TESTS: &[TestCase] = &[
     },
 ];
 
+// ── Showcase: CSS text effects with no terminal equivalent ─────────
+// These render via the CSS passthrough (Style::extra). There's no native
+// reference to diff against, so they're displayed for visual inspection
+// only — a render is a pass, a blank/failed capture is a fail. Structural
+// invariants for these effects live in src/render_tests.rs.
+struct Showcase {
+    name: &'static str,
+    twp_cmd: &'static str,
+}
+
+const SHOWCASE: &[Showcase] = &[
+    // Drop shadow — offset, blurred, dark.
+    Showcase {
+        name: "fx_drop_shadow",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=14,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"SHADOW\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\",\"text-shadow\":\"3px 3px 4px #000000\"}}}\\x1b\\\\'",
+    },
+    // Neon glow — zero-offset coloured blur behind a bright glyph.
+    Showcase {
+        name: "fx_neon_glow",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"NEON\",\"s\":{\"scale\":2,\"color\":\"#7df9ff\",\"background\":\"#0a1e24\",\"text-shadow\":\"0 0 8px #00e5ff\"}}}\\x1b\\\\'",
+    },
+    // Outline only — fill matches the background, a coloured stroke draws
+    // the glyph edges.
+    Showcase {
+        name: "fx_outline",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"EDGE\",\"s\":{\"scale\":2,\"color\":\"#0a1e24\",\"background\":\"#0a1e24\",\"-webkit-text-stroke\":\"1px #ff5fa2\"}}}\\x1b\\\\'",
+    },
+    // Opacity — faded text.
+    Showcase {
+        name: "fx_opacity",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"FADE\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\",\"opacity\":0.35}}}\\x1b\\\\'",
+    },
+    // Coloured underline — decoration in a different colour from the text
+    // (takumi only supports solid style; longhands, not the shorthand).
+    Showcase {
+        name: "fx_colored_underline",
+        twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"LINK\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\",\"text-decoration-line\":\"underline\",\"text-decoration-color\":\"#ff5fa2\"}}}\\x1b\\\\'",
+    },
+];
+
 // ── Helpers ───────────────────────────────────────────────────────
 
 fn display_is_available(display: &str) -> bool {
@@ -577,6 +617,62 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             category: tc.category.to_string(),
             native_label: if tc.native_uses_proxy { "Kitty native" } else { "Kitty OSC 66" }.to_string(),
         });
+    }
+
+    // ── Showcase: render-only CSS effects (no comparison) ──────────
+    eprintln!("── CSS text effects (visual only) ──");
+    for sc in SHOWCASE {
+        eprint!("  {}: ", sc.name);
+        let cfg_sc = CaptureConfig {
+            output: cfg.results_dir.join(format!("twp_{}.png", sc.name)),
+            display: xvfb.display().to_string(),
+            proxy: Some(cfg.proxy_path.clone()),
+            font: cfg.font.clone(),
+            font_size: cfg.font_size.clone(),
+            cols: 60,
+            rows: 10,
+            bg: "#0a1e24".to_string(),
+            fg: "#ecefc1".to_string(),
+            class: "twp-screenshot".to_string(),
+            timeout: 15,
+            command: vec![sc.twp_cmd.to_string()],
+        };
+        match capture_one(&cfg_sc) {
+            Ok(png) => {
+                eprintln!("RENDERED");
+                pass += 1;
+                entries.push(TestEntry {
+                    name: sc.name.to_string(),
+                    result: CompareResult {
+                        status: TestStatus::Pass,
+                        matches: 0,
+                        total: 0,
+                        mismatches: vec![],
+                    },
+                    native_png: None,
+                    twp_png: Some(png),
+                    category: "css-effects".to_string(),
+                    native_label: "(no terminal equivalent)".to_string(),
+                });
+            }
+            Err(e) => {
+                eprintln!("FAIL ({e})");
+                fail += 1;
+                entries.push(TestEntry {
+                    name: sc.name.to_string(),
+                    result: CompareResult {
+                        status: TestStatus::Fail(format!("render failed: {e}")),
+                        matches: 0,
+                        total: 0,
+                        mismatches: vec![],
+                    },
+                    native_png: None,
+                    twp_png: None,
+                    category: "css-effects".to_string(),
+                    native_label: "(no terminal equivalent)".to_string(),
+                });
+            }
+        }
     }
 
     let total = pass + fail + skip;

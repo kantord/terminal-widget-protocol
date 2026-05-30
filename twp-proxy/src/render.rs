@@ -17,7 +17,7 @@ use takumi::{
         style::{
             AlignItems, Color, ColorInput, Display, FlexDirection, FontFamily, FontSize,
             FontWeight as TkFW, FromCss, JustifyContent, Length, LengthDefaultsToZero, SpacePair,
-            Style as TkStyle, StyleDeclaration, TextAlign,
+            Style as TkStyle, StyleDeclaration, StyleDeclarationBlock, TextAlign,
         },
     },
     rendering::{ImageOutputFormat, RenderOptions, measure_layout, render, write_image},
@@ -372,6 +372,35 @@ fn to_takumi(node: &Node) -> TakumiNode {
     }
 }
 
+/// Parse the style's CSS passthrough map (`Style::extra`) into a list of
+/// takumi declarations. Each `key: value` pair is assembled into one CSS
+/// block and parsed by takumi's own CSS engine, so any property takumi
+/// supports — `text-shadow`, `opacity`, `-webkit-text-stroke`,
+/// `text-decoration`, `filter`, … — works with no per-property code.
+/// Malformed input is dropped (forward-compat), matching the typed
+/// vocabulary's "unknown props silently ignored" behavior.
+fn css_passthrough_decls(extra: &HashMap<String, serde_json::Value>) -> Vec<StyleDeclaration> {
+    let mut decls = Vec::new();
+    // Parse each property on its own so one unparseable value is dropped in
+    // isolation rather than discarding the whole style (takumi's block parser
+    // is all-or-nothing).
+    for (key, value) in extra {
+        let val = match value {
+            serde_json::Value::String(s) => Cow::Borrowed(s.as_str()),
+            serde_json::Value::Number(n) => Cow::Owned(n.to_string()),
+            serde_json::Value::Bool(b) => Cow::Owned(b.to_string()),
+            // arrays / objects / null are not valid CSS values
+            _ => continue,
+        };
+        let css = format!("{key}: {val}");
+        match css.parse::<StyleDeclarationBlock>() {
+            Ok(block) => decls.extend(block.iter().cloned()),
+            Err(_) => eprintln!("twp-proxy: ignoring invalid CSS property: {css}"),
+        }
+    }
+    decls
+}
+
 /// Build a monospace-grid text node: each character gets its own
 /// fixed-width cell box, so glyph positions are determined by the grid
 /// and not by the font's advance width. Zero drift by construction.
@@ -403,6 +432,10 @@ fn build_mono(node: &Node) -> TakumiNode {
     let family_key = if weight >= 700 { FAMILY_BOLD } else { FAMILY_REGULAR };
     let fg_color = s.color.as_deref().and_then(parse_color);
 
+    // Text effects (text-shadow, opacity, stroke, …) come through the CSS
+    // passthrough and apply per glyph. Parsed once, cloned onto each cell.
+    let extra_decls = css_passthrough_decls(&s.extra);
+
     // Build a flex row of single-character cells. Each cell is
     // char_w_cells × scale terminal cells.
     let cell_w = px_per_col() as f32 * char_w_cells as f32;
@@ -426,6 +459,9 @@ fn build_mono(node: &Node) -> TakumiNode {
             if let Some(c) = fg_color {
                 char_style =
                     char_style.with(StyleDeclaration::color(ColorInput::from(c)));
+            }
+            for decl in &extra_decls {
+                char_style = char_style.with(decl.clone());
             }
             let glyph = TakumiNode::text(ch.to_string()).with_style(char_style);
 

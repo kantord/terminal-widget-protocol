@@ -257,6 +257,92 @@ mod tests {
         }
     }
 
+    // ─── CSS passthrough effects ────────────────────────────────────
+    //
+    // These effects (shadow, opacity, stroke) have no terminal equivalent,
+    // so there's no native reference to compare against. Instead we assert
+    // self-referential invariants: render with and without the effect and
+    // check the output changed in the expected direction.
+
+    /// Total "ink" — count of pixels noticeably darker than the white bg.
+    fn total_ink(img: &RgbaImage) -> u32 {
+        let mut n = 0u32;
+        for p in img.pixels() {
+            if p[0] < 200 || p[1] < 200 || p[2] < 200 {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// Count of near-black pixels (strong, unfaded ink).
+    fn dark_ink(img: &RgbaImage) -> u32 {
+        let mut n = 0u32;
+        for p in img.pixels() {
+            if p[0] < 80 && p[1] < 80 && p[2] < 80 {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn text_shadow_adds_ink() {
+        // A hard, opaque, offset shadow paints pixels the plain glyph doesn't.
+        let plain = render_mono("XX", 4, 1, "");
+        let shadowed = render_mono("XX", 4, 1, "\"text-shadow\":\"3px 3px 0 #000000\"");
+        let plain_ink = total_ink(&plain);
+        let shadow_ink = total_ink(&shadowed);
+        assert!(
+            shadow_ink > plain_ink,
+            "text-shadow should add ink: plain={plain_ink}, shadowed={shadow_ink}"
+        );
+    }
+
+    #[test]
+    fn opacity_fades_text() {
+        // Low opacity blends black text toward the white bg, so strong
+        // near-black pixels nearly disappear.
+        let opaque = render_mono("MMMM", 4, 1, "");
+        let faded = render_mono("MMMM", 4, 1, "\"opacity\":0.2");
+        let opaque_dark = dark_ink(&opaque);
+        let faded_dark = dark_ink(&faded);
+        assert!(opaque_dark > 0, "opaque text should have dark ink");
+        assert!(
+            faded_dark < opaque_dark / 2,
+            "opacity 0.2 should fade most dark ink: opaque={opaque_dark}, faded={faded_dark}"
+        );
+    }
+
+    #[test]
+    fn text_stroke_adds_ink() {
+        // An outline stroke widens each glyph, adding ink.
+        let plain = render_mono("OOOO", 6, 1, "");
+        let stroked = render_mono(
+            "OOOO",
+            6,
+            1,
+            "\"-webkit-text-stroke\":\"2px #000000\"",
+        );
+        assert!(
+            total_ink(&stroked) > total_ink(&plain),
+            "stroke should add ink"
+        );
+    }
+
+    #[test]
+    fn invalid_css_is_ignored() {
+        // An unknown property must not panic and must not change rendering —
+        // the protocol's forward-compat guarantee.
+        let plain = render_mono("ABC", 3, 1, "");
+        let bogus = render_mono("ABC", 3, 1, "\"totally-not-a-prop\":\"42deg\"");
+        assert_eq!(
+            plain.as_raw(),
+            bogus.as_raw(),
+            "unknown CSS property should be ignored, leaving render unchanged"
+        );
+    }
+
     // ─── Property-based tests ───────────────────────────────────────
 
     proptest! {

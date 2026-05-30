@@ -73,8 +73,8 @@ fn diff_review() -> Demo {
     ]});
     let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":1,"padding":4,"background":"#0d1117","border-radius":6,"border":{"width":1,"color":"#30363d"}},"c":diff_rows});
 
-    // Inline review comment: avatar + shadowed bubble.
-    let avatar = img_node(STANDARD.encode(AVATAR), 36, 36, 18);
+    // Inline review comment: avatar (with online dot) + shadowed bubble.
+    let avatar = avatar_with_status(STANDARD.encode(AVATAR), 36, "#3fb950", "#0d1117");
     let author = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":6},"c":[
         json!({"n":"text","t":"Grace Hopper","s":{"color":"#f0f6fc","font-size":13,"font-family":sans_b,"letter-spacing":"0px"}}),
         json!({"n":"text","t":"reviewed 2h ago","s":{"color":"#8b949e","font-size":11,"font-family":sans,"letter-spacing":"0px"}})
@@ -142,12 +142,23 @@ fn img_node(b64: String, w: u32, h: u32, radius: u32) -> Value {
     })
 }
 
+/// A circular avatar with a status dot overlapping its corner — a `stack` of
+/// the image plus a flex-aligned dot. `ring` is the surrounding surface colour
+/// so the dot reads as cut out of it.
+fn avatar_with_status(b64: String, size: u32, dot: &str, ring: &str) -> Value {
+    let avatar = img_node(b64, size, size, size / 2);
+    let d = (size as f64 * 0.30).round();
+    let dot = json!({"n":"box","s":{"width":d,"height":d,"border-radius":d/2.0,"background":dot,"border":{"width":2,"color":ring}}});
+    let overlay = json!({"n":"flex","s":{"width":"100%","height":"100%","justify-content":"flex-end","align-items":"flex-end"},"c":[dot]});
+    json!({"n":"stack","s":{"width":size,"height":size},"c":[avatar, overlay]})
+}
+
 /// A profile card: a circular avatar (Ada Lovelace's public-domain portrait)
 /// beside proportional name/role text and a row of skill pills — img + flex +
 /// mono + sans text together.
 fn profile_card() -> Demo {
     const PORTRAIT: &[u8] = include_bytes!("../demo/assets/ada_lovelace.jpg");
-    let avatar = img_node(STANDARD.encode(PORTRAIT), 72, 72, 36);
+    let avatar = avatar_with_status(STANDARD.encode(PORTRAIT), 72, "#22c55e", "#1e293b");
 
     let name = json!({"n":"text","t":"Ada Lovelace","s":{"color":"#f1f5f9","font-size":18,"font-family":"twp-sans-b","letter-spacing":"0px"}});
     let role = json!({"n":"text","t":"Mathematician · first programmer","s":{"color":"#94a3b8","font-size":14,"font-family":"twp-sans","letter-spacing":"0px"}});
@@ -192,13 +203,18 @@ fn image_gallery() -> Demo {
             "Sven Pieren",
         ),
     ];
+    // Each tile is a `stack`: the photo, with a dark scrim + credit overlaid
+    // on its lower edge (a Netflix/YouTube-style thumbnail caption).
     let cells: Vec<Value> = tiles
         .iter()
         .map(|(bytes, who)| {
             let thumb = img_node(STANDARD.encode(bytes), 124, 82, 8);
-            let name = json!({"n":"text","t":*who,"s":{"color":"#cbd5e1","font-size":11,"font-family":sans,"letter-spacing":"0px"}});
-            let credit = json!({"n":"text","t":"Unsplash","s":{"color":"#64748b","font-size":9,"font-family":sans,"letter-spacing":"0px"}});
-            json!({"n":"flex","s":{"flex-direction":"column","gap":3,"align-items":"start","width":124},"c":[thumb, name, credit]})
+            let credit_band = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","padding":5,"background":"#000000b3","border-bottom-left-radius":"8px","border-bottom-right-radius":"8px"},"c":[
+                json!({"n":"text","t":*who,"s":{"color":"#ffffff","font-size":10,"font-family":sans,"letter-spacing":"0px"}}),
+                json!({"n":"text","t":"Unsplash","s":{"color":"#cbd5e1","font-size":8,"font-family":sans,"letter-spacing":"0px"}})
+            ]});
+            let scrim = json!({"n":"flex","s":{"flex-direction":"column","justify-content":"flex-end","width":"100%","height":"100%"},"c":[credit_band]});
+            json!({"n":"stack","s":{"width":124,"height":82},"c":[thumb, scrim]})
         })
         .collect();
     let strip = json!({"n":"flex","s":{"flex-direction":"row","gap":12},"c":cells});
@@ -210,7 +226,7 @@ fn image_gallery() -> Demo {
         "c":[title, strip]
     }});
 
-    Demo { name: "app_gallery", category: "mini-app", cols: 66, rows: 9, scene }
+    Demo { name: "app_gallery", category: "mini-app", cols: 66, rows: 8, scene }
 }
 
 /// A rendered Markdown document: heading hierarchy at real, different font

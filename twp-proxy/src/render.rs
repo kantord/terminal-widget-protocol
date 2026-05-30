@@ -432,6 +432,46 @@ fn build_img(node: &Node, style: TkStyle) -> TakumiNode {
     }
 }
 
+/// Apply a literal CSS declaration string to a style. Used for the internal
+/// positioning of `stack` layers (position/inset/z-index). Parse failures are
+/// logged and skipped.
+fn apply_css_str(mut style: TkStyle, css: &str) -> TkStyle {
+    match css.parse::<StyleDeclarationBlock>() {
+        Ok(block) => {
+            for decl in block.iter() {
+                style = style.with(decl.clone());
+            }
+        }
+        Err(_) => eprintln!("twp-proxy: internal css failed to parse: {css}"),
+    }
+    style
+}
+
+/// Build a `stack` node: its children are painted as full-bleed layers in
+/// array order (later = on top). The stack only provides overlap + z-order;
+/// any positioning *within* a layer is done with a flex inside it. The layers
+/// fill the stack's cell box — a native terminal would composite them using
+/// the graphics protocol's own z-index.
+fn build_stack(node: &Node) -> TakumiNode {
+    let container = apply_css_str(build_style(node), "position: relative");
+    let layers: Vec<TakumiNode> = node
+        .c
+        .iter()
+        .enumerate()
+        .map(|(i, child)| {
+            let inner = to_takumi(child);
+            let wrap = apply_css_str(
+                TkStyle::default(),
+                &format!(
+                    "position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: {i}"
+                ),
+            );
+            TakumiNode::container(vec![inner]).with_style(wrap)
+        })
+        .collect();
+    TakumiNode::container(layers).with_style(container)
+}
+
 fn to_takumi(node: &Node) -> TakumiNode {
     let style = build_style(node);
     match node.n.as_str() {
@@ -441,6 +481,7 @@ fn to_takumi(node: &Node) -> TakumiNode {
         }
         "mono" => build_mono(node),
         "img" => build_img(node, style),
+        "stack" => build_stack(node),
         // "flex", "box", or anything not text (including unfilled-component
         // placeholders). Layout differences are encoded via the `display`
         // declaration applied in build_style.

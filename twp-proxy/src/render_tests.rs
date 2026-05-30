@@ -369,6 +369,26 @@ mod tests {
     }
 
     #[test]
+    fn stack_paints_later_layer_on_top() {
+        // Base layer fills red; top layer is a centered blue box. The centre
+        // pixel must be blue (the upper layer), proving z-order + overlap.
+        let json = "{\"S\":{\"n\":\"stack\",\"s\":{\"width\":\"100%\",\"height\":\"100%\"},\"c\":[\
+            {\"n\":\"box\",\"s\":{\"width\":\"100%\",\"height\":\"100%\",\"background\":\"#ff0000\"}},\
+            {\"n\":\"flex\",\"s\":{\"width\":\"100%\",\"height\":\"100%\",\"justify-content\":\"center\",\"align-items\":\"center\"},\
+             \"c\":[{\"n\":\"box\",\"s\":{\"width\":40,\"height\":40,\"background\":\"#0000ff\"}}]}\
+        ]}}";
+        let img = render_payload(json, 6, 6);
+        let center = img.get_pixel(img.width() / 2, img.height() / 2);
+        assert!(
+            center[2] > 200 && center[0] < 80,
+            "centre should be the top (blue) layer, got {center:?}"
+        );
+        // A corner is uncovered by the small top box, so it stays red.
+        let corner = img.get_pixel(2, 2);
+        assert!(corner[0] > 200 && corner[2] < 80, "corner should be base red");
+    }
+
+    #[test]
     fn img_missing_source_degrades_without_panic() {
         // No `d`/`path` — must not panic, just renders nothing for the node.
         let json = "{\"S\":{\"n\":\"img\",\"s\":{\"width\":20,\"height\":20}}}";

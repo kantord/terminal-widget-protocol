@@ -86,6 +86,9 @@ struct CaptureConfig {
     rows: u32,
     bg: String,
     fg: String,
+    /// Extra kitty `--override` bodies (e.g. `color0=#282828`) applied for this
+    /// capture — used to install a one-off colour theme per session.
+    palette: Vec<String>,
     class: String,
     timeout: u64,
     command: Vec<String>,
@@ -460,6 +463,9 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
         "--override=shell_integration=disabled".to_string(),
         "--override=window_padding_width=0".to_string(),
     ];
+    for ov in &cfg.palette {
+        kitty_args.push(format!("--override={ov}"));
+    }
 
     if let Some(ref proxy) = cfg.proxy {
         kitty_args.push(proxy.clone());
@@ -494,12 +500,9 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
     while capture_start.elapsed() < capture_timeout {
         thread::sleep(Duration::from_secs(1));
         if let Some(wid) = find_window(&cfg.display, &cfg.class) {
-            if capture_window(&cfg.display, &wid, &cfg.output) {
-                let len = fs::metadata(&cfg.output).map(|m| m.len()).unwrap_or(0);
-                if len > 500 {
-                    captured = true;
-                    break;
-                }
+            if capture_window(&cfg.display, &wid, &cfg.output) && image_has_content(&cfg.output) {
+                captured = true;
+                break;
             }
         }
     }
@@ -514,6 +517,35 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
     }
 
     fs::read(&cfg.output).map_err(|e| format!("failed to read screenshot: {e}"))
+}
+
+/// True once the captured PNG holds real content (not just a blank, freshly
+/// cleared window). Decodes the image and counts pixels that differ from the
+/// top-right corner (treated as the background) — robust regardless of image
+/// size or theme contrast, unlike a raw byte-length floor.
+fn image_has_content(path: &Path) -> bool {
+    let img = match image::open(path) {
+        Ok(i) => i.to_rgba8(),
+        Err(_) => return false,
+    };
+    let (w, h) = img.dimensions();
+    if w < 2 || h < 2 {
+        return false;
+    }
+    let bg = *img.get_pixel(w - 1, 0);
+    let mut differing = 0u32;
+    for p in img.pixels() {
+        let d = (p[0] as i32 - bg[0] as i32).abs()
+            + (p[1] as i32 - bg[1] as i32).abs()
+            + (p[2] as i32 - bg[2] as i32).abs();
+        if d > 60 {
+            differing += 1;
+            if differing > 200 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // ── Test runner ───────────────────────────────────────────────────
@@ -575,6 +607,7 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             rows: 10,
             bg: "#0a1e24".to_string(),
             fg: "#ecefc1".to_string(),
+            palette: Vec::new(),
             class: "twp-screenshot".to_string(),
             timeout: 15,
             command: vec![tc.native_cmd.to_string()],
@@ -593,6 +626,7 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
                 rows: 10,
                 bg: "#0a1e24".to_string(),
                 fg: "#ecefc1".to_string(),
+                palette: Vec::new(),
                 class: "twp-screenshot".to_string(),
                 timeout: 15,
                 command: vec![tc.twp_cmd.to_string()],
@@ -696,6 +730,7 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             rows: win_rows,
             bg: "#0a1e24".to_string(),
             fg: "#ecefc1".to_string(),
+            palette: Vec::new(),
             class: "twp-screenshot".to_string(),
             timeout: 15,
             command: vec![twp_cmd],
@@ -776,9 +811,19 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
     // Native-vs-TWP comparisons: capture a native terminal command and a TWP
     // widget in *separate* windows (they can't share one — placeholder images
     // and printed text don't coexist on screen), shown side by side.
-    eprintln!("── Native vs term() (side by side) ──");
+    eprintln!("── Native vs term() across terminal themes (side by side) ──");
     for cmp in demos::comparison_demos() {
         eprint!("  {}: ", cmp.name);
+        // Install the theme one-off via kitty `--override color0..15` plus the
+        // matching fg/bg. The native swatches read these palette slots directly;
+        // the proxy queries them over OSC so its `term()` colours match.
+        let palette: Vec<String> = cmp
+            .theme
+            .ansi
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("color{i}={c}"))
+            .collect();
         let native_cfg = CaptureConfig {
             output: cfg.results_dir.join(format!("kitty_{}.png", cmp.name)),
             display: display.clone(),
@@ -787,8 +832,9 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             font_size: cfg.font_size.clone(),
             cols: cmp.native_cols,
             rows: cmp.native_rows,
-            bg: "#0a1e24".to_string(),
-            fg: "#ecefc1".to_string(),
+            bg: cmp.theme.bg.to_string(),
+            fg: cmp.theme.fg.to_string(),
+            palette: palette.clone(),
             class: "twp-screenshot".to_string(),
             timeout: 15,
             command: vec![cmp.native_cmd.clone()],
@@ -801,8 +847,9 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             font_size: cfg.font_size.clone(),
             cols: cmp.twp_cols + 6,
             rows: cmp.twp_rows + 4,
-            bg: "#0a1e24".to_string(),
-            fg: "#ecefc1".to_string(),
+            bg: cmp.theme.bg.to_string(),
+            fg: cmp.theme.fg.to_string(),
+            palette,
             class: "twp-screenshot".to_string(),
             timeout: 15,
             command: vec![demo_twp_cmd(cmp.twp_cols, cmp.twp_rows, &cmp.twp_scene)],
@@ -817,7 +864,7 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             fail += 1;
         }
         entries.push(TestEntry {
-            name: cmp.name.to_string(),
+            name: format!("{} — {}", cmp.name, cmp.label),
             result: if ok {
                 CompareResult { status: TestStatus::Pass, matches: 0, total: 0, mismatches: vec![] }
             } else {
@@ -826,7 +873,7 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             native_png,
             twp_png,
             category: cmp.category.to_string(),
-            native_label: "Kitty native (ANSI 48;5;n)".to_string(),
+            native_label: format!("Kitty native — {} (ANSI 48;5;n)", cmp.label),
         });
     }
 
@@ -1018,7 +1065,7 @@ fn parse_capture_args(args: &[String]) -> Result<CaptureConfig, String> {
 
     Ok(CaptureConfig {
         output, display, proxy, font, font_size,
-        cols, rows, bg, fg, class, timeout, command,
+        cols, rows, bg, fg, palette: Vec::new(), class, timeout, command,
     })
 }
 

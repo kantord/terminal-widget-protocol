@@ -426,6 +426,35 @@ mod tests {
     }
 
     #[test]
+    fn flex_grow_passthrough_expands_child() {
+        // `flex-grow` has no typed Style field — it rides the CSS passthrough.
+        // A row holds a fixed 40px green box and a red box with flex-grow:1.
+        // The red box must claim the *rest* of the width (it has no width of its
+        // own, so without flex-grow it would collapse to zero). We assert the
+        // red region is much wider than the green one.
+        let json = "{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%\",\"height\":\"100%\"},\"c\":[\
+            {\"n\":\"box\",\"s\":{\"flex-grow\":1,\"height\":\"100%\",\"background\":\"#ff0000\"}},\
+            {\"n\":\"box\",\"s\":{\"width\":40,\"height\":\"100%\",\"background\":\"#00ff00\"}}\
+        ]}}";
+        let img = render_payload(json, 20, 3);
+        let y = img.height() / 2;
+        let (mut red, mut green) = (0u32, 0u32);
+        for x in 0..img.width() {
+            let p = img.get_pixel(x, y);
+            if p[0] > 180 && p[1] < 80 {
+                red += 1;
+            } else if p[1] > 180 && p[0] < 80 {
+                green += 1;
+            }
+        }
+        assert!(green > 0, "fixed green box should be present");
+        assert!(
+            red > green * 3,
+            "flex-grow child should fill most of the row (red={red}, green={green})"
+        );
+    }
+
+    #[test]
     fn img_missing_source_degrades_without_panic() {
         // No `d`/`path` — must not panic, just renders nothing for the node.
         let json = "{\"S\":{\"n\":\"img\",\"s\":{\"width\":20,\"height\":20}}}";

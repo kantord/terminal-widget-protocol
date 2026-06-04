@@ -35,7 +35,35 @@ pub fn generated_demos() -> Vec<Demo> {
         svg_gauge(),
         term_themed_card(),
         svg_themed_chart(),
+        now_playing_bar(),
     ]
+}
+
+/// Demonstrates `flex-grow` (which has no typed `Style` field — it rides the
+/// CSS passthrough). A media bar: a fixed play glyph and a fixed time label
+/// pin the ends, while the progress track in the middle carries `flex-grow:1`
+/// so it absorbs *all* the remaining width. The canonical "fill the rest" flex
+/// idiom that `justify-content` alone can't express.
+fn now_playing_bar() -> Demo {
+    let play = json!({"n":"mono","t":"▶","s":{"color":"#38bdf8","font-weight":"bold"}});
+    let time = json!({"n":"mono","t":"1:23 / 3:40","s":{"color":"#94a3b8"}});
+    // The track grows; inside it a filled sub-bar shows ~40% progress.
+    let track = json!({"n":"flex","s":{
+        "flex-grow":1,
+        "height":8,
+        "background":"#334155",
+        "border-radius":4,
+        "align-items":"center"
+    },"c":[
+        json!({"n":"box","s":{"width":"40%","height":8,"background":"#38bdf8","border-radius":4}})
+    ]});
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"row","align-items":"center","gap":12,"padding":14,
+             "width":"100%","height":"100%","background":"#0f172a"},
+        "c":[play, track, time]
+    }});
+    Demo { name: "now_playing_bar", category: "mini-ui", cols: 34, rows: 3, scene }
 }
 
 /// SVG that uses terminal colors: bars filled with `term()` palette colors and
@@ -70,7 +98,8 @@ fn svg_themed_chart() -> Demo {
 /// windows. They can't share one — placeholder images and printed text don't
 /// coexist on screen — so the report places the two screenshots side by side.
 pub struct Comparison {
-    pub name: &'static str,
+    pub name: String,
+    pub label: String,
     pub category: &'static str,
     pub native_cmd: String,
     pub native_cols: u32,
@@ -78,17 +107,77 @@ pub struct Comparison {
     pub twp_cols: u32,
     pub twp_rows: u32,
     pub twp_scene: Value,
+    pub theme: Theme,
+}
+
+/// A colour theme installed one-off for a single capture session: the 16 ANSI
+/// palette entries plus default fg/bg. Applied to kitty via `--override`s so
+/// the *same* widget code renders differently per theme.
+#[derive(Clone)]
+pub struct Theme {
+    pub name: &'static str,
+    pub bg: &'static str,
+    pub fg: &'static str,
+    pub ansi: [&'static str; 16],
+}
+
+/// A few well-known palettes. Each is a real terminal theme so the comparison
+/// shows recognisable colours reacting to the session theme.
+pub fn themes() -> Vec<Theme> {
+    vec![
+        Theme {
+            name: "Gruvbox Dark",
+            bg: "#282828",
+            fg: "#ebdbb2",
+            ansi: [
+                "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286",
+                "#689d6a", "#a89984", "#928374", "#fb4934", "#b8bb26", "#fabd2f",
+                "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
+            ],
+        },
+        Theme {
+            name: "Dracula",
+            bg: "#282a36",
+            fg: "#f8f8f2",
+            ansi: [
+                "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6",
+                "#8be9fd", "#f8f8f2", "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5",
+                "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
+            ],
+        },
+        Theme {
+            name: "Solarized Light",
+            bg: "#fdf6e3",
+            fg: "#657b83",
+            ansi: [
+                "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682",
+                "#2aa198", "#eee8d5", "#002b36", "#cb4b16", "#586e75", "#657b83",
+                "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
+            ],
+        },
+        Theme {
+            name: "Nord",
+            bg: "#2e3440",
+            fg: "#d8dee9",
+            ansi: [
+                "#3b4252", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead",
+                "#88c0d0", "#e5e9f0", "#4c566a", "#bf616a", "#a3be8c", "#ebcb8b",
+                "#81a1c1", "#b48ead", "#8fbcbb", "#eceff4",
+            ],
+        },
+    ]
 }
 
 pub fn comparison_demos() -> Vec<Comparison> {
-    vec![term_palette_comparison()]
+    themes().into_iter().map(term_palette_comparison).collect()
 }
 
 /// Native ANSI palette swatches (`\e[48;5;Nm`) beside the same 16 colors drawn
-/// by TWP via `term(0)`…`term(15)`. Both resolve to the terminal's palette, so
-/// the rows match color-for-color — proving the proxy's queried palette equals
-/// the terminal's.
-fn term_palette_comparison() -> Comparison {
+/// by TWP via `term(0)`…`term(15)`. Both resolve to the session's palette, so
+/// the rows match color-for-color — and because we run this once per `theme`,
+/// the report shows the *same* widget reacting to each terminal theme, proving
+/// the proxy queries (rather than hardcodes) the palette.
+fn term_palette_comparison(theme: Theme) -> Comparison {
     // Native: two rows of 8 ANSI background swatches (8 cells each, 2 lines tall
     // via a leading blank line per row) — sized so the PNG clears the capture
     // floor.
@@ -112,8 +201,10 @@ fn term_palette_comparison() -> Comparison {
         "c":[row(0..8), row(8..16)]
     }});
 
+    let slug = theme.name.to_lowercase().replace(' ', "_");
     Comparison {
-        name: "term_palette",
+        name: format!("term_palette_{slug}"),
+        label: theme.name.to_string(),
         category: "term-compare",
         native_cmd: native,
         native_cols: 70,
@@ -121,6 +212,7 @@ fn term_palette_comparison() -> Comparison {
         twp_cols: 48,
         twp_rows: 5,
         twp_scene: scene,
+        theme,
     }
 }
 

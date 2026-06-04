@@ -79,7 +79,7 @@ pub fn generate_html(
                 "mini-app" => "Mini apps (minimap, heatmap, charts, chat)",
                 "svg" => "Vector graphics (SVG — curves, arcs, gauges)",
                 "term" => "Terminal colors (theme-matched via term())",
-                "term-compare" => "Native vs term() (side by side)",
+                "term-compare" => "term() reacts to the session theme (native ANSI vs TWP, per theme)",
                 other => other,
             };
             html.push_str(&format!(

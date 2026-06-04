@@ -78,6 +78,7 @@ pub fn generate_html(
                 "mini-ui" => "Mini UIs (flex + mono + effects)",
                 "mini-app" => "Mini apps (minimap, heatmap, charts, chat)",
                 "svg" => "Vector graphics (SVG — curves, arcs, gauges)",
+                "term" => "Terminal colors (theme-matched via term())",
                 other => other,
             };
             html.push_str(&format!(
@@ -87,7 +88,7 @@ pub fn generate_html(
 
         let showcase = matches!(
             entry.category.as_str(),
-            "css-effects" | "mini-ui" | "mini-app" | "svg"
+            "css-effects" | "mini-ui" | "mini-app" | "svg" | "term"
         );
         let summary = entry.result.summary();
         let status_word = summary.split_whitespace().next().unwrap_or("SKIP");

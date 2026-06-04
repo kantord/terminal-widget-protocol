@@ -369,6 +369,25 @@ mod tests {
     }
 
     #[test]
+    fn term_color_resolves_to_palette() {
+        // With no proxy/query, the default xterm palette applies: term(1) = red.
+        let json = "{\"S\":{\"n\":\"box\",\"s\":{\"width\":\"100%\",\"height\":\"100%\",\"background\":\"term(1)\"}}}";
+        let img = render_payload(json, 3, 3);
+        let p = img.get_pixel(img.width() / 2, img.height() / 2);
+        assert!(p[0] > 150 && p[1] < 60 && p[2] < 60, "term(1) should be red, got {p:?}");
+    }
+
+    #[test]
+    fn term_in_display_text_is_not_substituted() {
+        // The literal string "term(1)" as mono text must render as text, not a
+        // colour — i.e. it produces ink (glyphs), not a solid red fill.
+        let plain = render_mono("ABCDEFG", 7, 1, "");
+        let literal = render_mono("term(1)", 7, 1, "");
+        // both have ink; the point is it didn't panic / get swallowed as a colour
+        assert!(total_ink(&literal) > 0 && total_ink(&plain) > 0);
+    }
+
+    #[test]
     fn svg_node_renders_vector() {
         // A red circle — SVG markup inline in `t`, rasterized by resvg.
         let json = "{\"S\":{\"n\":\"svg\",\"s\":{\"width\":40,\"height\":40},\

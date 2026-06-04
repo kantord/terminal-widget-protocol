@@ -33,7 +33,91 @@ pub fn generated_demos() -> Vec<Demo> {
         svg_line_chart(),
         svg_donut(),
         svg_gauge(),
+        term_palette(),
+        term_themed_card(),
+        svg_themed_chart(),
     ]
+}
+
+/// SVG that uses terminal colors: bars filled with `term()` palette colors and
+/// a baseline stroked in `currentColor` (which resolves to the terminal fg via
+/// the node's `color: term(fg)`). The whole chart adapts to the user's theme,
+/// on a transparent card that blends with the terminal.
+fn svg_themed_chart() -> Demo {
+    let svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 210 88'>\
+        <rect x='2' y='6'  width='180' height='16' rx='4' fill='term(2)'/>\
+        <rect x='2' y='30' width='120' height='16' rx='4' fill='term(4)'/>\
+        <rect x='2' y='54' width='78'  height='16' rx='4' fill='term(1)'/>\
+        <line x1='2' y1='2' x2='2' y2='78' stroke='currentColor' stroke-width='2'/>\
+        </svg>"
+        .to_string();
+    let chart = json!({"n":"svg","t":svg,"s":{"width":250,"height":104,"color":"term(fg)"}});
+    let legend = json!({"n":"flex","s":{"flex-direction":"row","gap":12},"c":[
+        json!({"n":"mono","t":"2xx","s":{"color":"term(2)"}}),
+        json!({"n":"mono","t":"3xx","s":{"color":"term(4)"}}),
+        json!({"n":"mono","t":"5xx","s":{"color":"term(1)"}})
+    ]});
+    let title = json!({"n":"mono","t":"responses by status","s":{"color":"term(fg)","font-weight":"bold"}});
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"column","gap":8,"padding":14,"width":"100%","height":"100%","background":"transparent"},
+        "c":[title, chart, legend]
+    }});
+    Demo { name: "svg_themed_chart", category: "term", cols: 38, rows: 10, scene }
+}
+
+/// Native-vs-TWP palette comparison. The shell prints a `native` row of real
+/// ANSI background swatches (`\e[48;5;Nm`); the TWP widget renders the same 16
+/// colors via `term(0)`…`term(15)` directly beneath it, aligned, so you can
+/// see they match. Proves the proxy's queried palette equals the terminal's.
+/// (The native row is emitted by `native_prefix`.)
+fn term_palette() -> Demo {
+    let swatch = |i: u32| json!({"n":"box","s":{"width":18,"height":22,"background":format!("term({i})")}});
+    let row: Vec<Value> = (0..16).map(swatch).collect();
+    let twp = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","width":"100%","height":"100%","background":"term(bg)"},"c":[
+        json!({"n":"mono","t":"twp     ","s":{"color":"term(fg)"}}),
+        json!({"n":"flex","s":{"flex-direction":"row","gap":0},"c":row})
+    ]});
+    Demo { name: "term_palette", category: "term", cols: 40, rows: 2, scene: json!({"S": twp}) }
+}
+
+/// Native terminal output to emit *before* a widget, for side-by-side
+/// comparison. Only `term_palette` uses it: a row of 16 ANSI background
+/// swatches matching the TWP widget's `term()` swatches.
+pub fn native_prefix(name: &str) -> Option<String> {
+    if name != "term_palette" {
+        return None;
+    }
+    let mut s = String::from("printf 'native  '; ");
+    for i in 0..16 {
+        s.push_str(&format!("printf '\\033[48;5;{i}m  \\033[0m'; "));
+    }
+    s.push_str("printf '\\n'");
+    Some(s)
+}
+
+/// A status card with a **transparent** background (so the terminal shows
+/// through) and theme colors (`term(1)`/`term(2)`/`term(3)`) — it reads as a
+/// native part of the terminal rather than a pasted rectangle.
+fn term_themed_card() -> Demo {
+    let dot = |c: &str| json!({"n":"box","s":{"width":10,"height":10,"border-radius":5,"background":c}});
+    let row = |c: &str, label: &str| {
+        json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":8},"c":[
+            dot(c), json!({"n":"mono","t":label,"s":{"color":"term(fg)"}})
+        ]})
+    };
+    let rows = json!({"n":"flex","s":{"flex-direction":"column","gap":6},"c":[
+        row("term(2)", "build    passed"),
+        row("term(3)", "lint     warnings"),
+        row("term(1)", "deploy   failed"),
+    ]});
+    let title = json!({"n":"mono","t":"CI status","s":{"color":"term(fg)","font-weight":"bold"}});
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"column","gap":8,"padding":14,"width":"100%","height":"100%","background":"transparent"},
+        "c":[title, rows]
+    }});
+    Demo { name: "term_themed_card", category: "term", cols: 26, rows: 7, scene }
 }
 
 /// An `svg` node carrying inline SVG markup (it's text — a shell script could

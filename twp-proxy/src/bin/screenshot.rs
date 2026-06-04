@@ -760,8 +760,17 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
         let twp_cmd = demo_twp_cmd(demo.cols, demo.rows, &demo.scene);
         // Render into a window a little larger than the widget so nothing
         // is clipped at the edges.
-        let (win_c, win_r) = (demo.cols + 6, demo.rows + 4);
-        if run_showcase(demo.name, demo.category, twp_cmd, win_c, win_r) {
+        let (win_c, mut win_r) = (demo.cols + 6, demo.rows + 4);
+        // Some demos print a native-terminal reference line first (e.g. the
+        // palette comparison); prepend it and leave room for it.
+        let cmd = match demos::native_prefix(demo.name) {
+            Some(prefix) => {
+                win_r += 2;
+                format!("{prefix}; {twp_cmd}")
+            }
+            None => twp_cmd,
+        };
+        if run_showcase(demo.name, demo.category, cmd, win_c, win_r) {
             pass += 1;
         } else {
             fail += 1;

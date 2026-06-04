@@ -51,6 +51,102 @@ pub(crate) fn px_per_row() -> u32 {
     CELL_PX.get().map(|c| c.1).unwrap_or(DEFAULT_PX_PER_ROW)
 }
 
+// ── Terminal color palette ─────────────────────────────────────────
+//
+// Widgets can reference the user's terminal theme with `term(fg)`,
+// `term(bg)`, and `term(0..255)` — resolved against the palette below.
+// The proxy queries the real terminal (OSC 4 / 10 / 11) at startup and
+// installs it via `set_palette`; absent that (library use, tests), a
+// standard xterm default is used. `transparent` (a normal CSS keyword)
+// lets the terminal background show through, no query needed.
+
+/// The 16 ANSI colors + default fg/bg + the computed 256-color palette.
+#[derive(Clone, Copy)]
+pub struct Palette {
+    pub fg: [u8; 3],
+    pub bg: [u8; 3],
+    pub ansi: [[u8; 3]; 256],
+}
+
+static PALETTE: OnceLock<Palette> = OnceLock::new();
+
+pub fn set_palette(p: Palette) {
+    let _ = PALETTE.set(p);
+}
+
+fn palette() -> Palette {
+    PALETTE.get().copied().unwrap_or_else(default_palette)
+}
+
+/// Build a full 256-entry palette from the 16 base colors: indices 16–231
+/// are the standard 6×6×6 cube and 232–255 the grayscale ramp — both fixed
+/// formulas, so only 0–15 (+ fg/bg) are ever theme-dependent.
+pub fn palette_from_base(base16: [[u8; 3]; 16], fg: [u8; 3], bg: [u8; 3]) -> Palette {
+    let mut ansi = [[0u8; 3]; 256];
+    ansi[..16].copy_from_slice(&base16);
+    let cube = |c: usize| -> u8 {
+        if c == 0 { 0 } else { (55 + c * 40) as u8 }
+    };
+    for (n, slot) in ansi[16..232].iter_mut().enumerate() {
+        *slot = [cube((n / 36) % 6), cube((n / 6) % 6), cube(n % 6)];
+    }
+    for (n, slot) in ansi[232..256].iter_mut().enumerate() {
+        let v = (8 + n * 10) as u8;
+        *slot = [v, v, v];
+    }
+    Palette { fg, bg, ansi }
+}
+
+pub fn default_palette() -> Palette {
+    // Standard xterm 16-color defaults.
+    let base: [[u8; 3]; 16] = [
+        [0, 0, 0], [205, 0, 0], [0, 205, 0], [205, 205, 0],
+        [0, 0, 238], [205, 0, 205], [0, 205, 205], [229, 229, 229],
+        [127, 127, 127], [255, 0, 0], [0, 255, 0], [255, 255, 0],
+        [92, 92, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255],
+    ];
+    palette_from_base(base, [229, 229, 229], [0, 0, 0])
+}
+
+/// Resolve a `term(...)` token to an RGB triple, or None if it isn't one.
+pub(crate) fn resolve_term(s: &str) -> Option<[u8; 3]> {
+    let inner = s.trim().strip_prefix("term(")?.strip_suffix(')')?.trim();
+    let pal = palette();
+    match inner {
+        "fg" => Some(pal.fg),
+        "bg" => Some(pal.bg),
+        _ => inner.parse::<usize>().ok().filter(|&i| i < 256).map(|i| pal.ansi[i]),
+    }
+}
+
+/// Replace every `term(...)` token in a CSS/SVG value string with its `#rrggbb`
+/// equivalent. The token is self-delimiting, so this is a safe substitution in
+/// any color-bearing value without parsing the surrounding CSS.
+pub(crate) fn substitute_term(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(pos) = rest.find("term(") {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos..];
+        match after.find(')') {
+            Some(end) => {
+                let token = &after[..=end];
+                match resolve_term(token) {
+                    Some([r, g, b]) => out.push_str(&format!("#{r:02x}{g:02x}{b:02x}")),
+                    None => out.push_str(token),
+                }
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(after);
+                return out;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Final-fallback font paths if every other discovery mechanism fails.
 const FONT_PROBE: &[&str] = &[
     "/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
@@ -477,7 +573,10 @@ fn build_stack(node: &Node) -> TakumiNode {
 /// and rasterizes it via resvg into the node's box. On parse failure the node
 /// degrades to an empty styled box.
 fn build_svg(node: &Node, style: TkStyle) -> TakumiNode {
-    let svg = node.t.as_deref().unwrap_or("");
+    // Resolve `term(...)` tokens in the markup (self-delimiting → safe), then
+    // parse. `currentColor` inside the SVG resolves to the node's `color`
+    // (set e.g. via `color: term(fg)`), handled natively by resvg/takumi.
+    let svg = substitute_term(node.t.as_deref().unwrap_or(""));
     match svg.parse::<SvgSource>() {
         Ok(src) => {
             let source: ImageSource = src.into();
@@ -531,7 +630,8 @@ fn css_passthrough_decls(extra: &HashMap<String, serde_json::Value>) -> Vec<Styl
             // arrays / objects / null are not valid CSS values
             _ => continue,
         };
-        let css = format!("{key}: {val}");
+        // Resolve any `term(...)` palette tokens before takumi parses the value.
+        let css = format!("{key}: {}", substitute_term(&val));
         match css.parse::<StyleDeclarationBlock>() {
             Ok(block) => decls.extend(block.iter().cloned()),
             Err(_) => eprintln!("twp-proxy: ignoring invalid CSS property: {css}"),
@@ -802,6 +902,13 @@ fn to_length_zero(d: Dimension) -> LengthDefaultsToZero {
 }
 
 fn parse_color(s: &str) -> Option<Color> {
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("transparent") {
+        return Some(Color::from([0, 0, 0, 0]));
+    }
+    if let Some([r, g, b]) = resolve_term(s) {
+        return Some(Color::from([r, g, b, 255]));
+    }
     let hex = s.strip_prefix('#')?;
     let (r, g, b, a) = match hex.len() {
         3 => {

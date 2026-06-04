@@ -128,6 +128,141 @@ fn pty_size_from_winsize(ws: &libc::winsize) -> PtySize {
     }
 }
 
+/// Query the terminal palette via OSC 4 (indices 0–15), OSC 10 (fg) and
+/// OSC 11 (bg), install it via `render::set_palette`, and return any
+/// non-response bytes read (stray input) so they can be replayed to the child.
+/// Falls back to the default palette if the terminal doesn't answer.
+fn query_palette() -> Vec<u8> {
+    use std::time::{Duration, Instant};
+
+    let stdin = io::stdin();
+    // Temporarily make reads time out (VMIN=0, VTIME=1 → 0.1s) so we don't
+    // block forever on a terminal that never answers.
+    let saved = termios::tcgetattr(&stdin).ok();
+    if let Some(s) = &saved {
+        let mut t = s.clone();
+        t.control_chars[libc::VMIN as usize] = 0;
+        t.control_chars[libc::VTIME as usize] = 1;
+        let _ = termios::tcsetattr(&stdin, SetArg::TCSANOW, &t);
+    }
+
+    // Emit the queries.
+    let mut q = Vec::new();
+    for i in 0..16u8 {
+        q.extend_from_slice(format!("\x1b]4;{i};?\x07").as_bytes());
+    }
+    q.extend_from_slice(b"\x1b]10;?\x07\x1b]11;?\x07");
+    {
+        let mut out = io::stdout();
+        let _ = out.write_all(&q);
+        let _ = out.flush();
+    }
+
+    // Read replies until we have all 18 (16 + fg + bg) or hit the deadline.
+    let deadline = Instant::now() + Duration::from_millis(300);
+    let mut acc: Vec<u8> = Vec::new();
+    {
+        let mut handle = stdin.lock();
+        let mut buf = [0u8; 4096];
+        while Instant::now() < deadline {
+            match handle.read(&mut buf) {
+                Ok(0) => {
+                    if !acc.is_empty() {
+                        break;
+                    }
+                }
+                Ok(n) => acc.extend_from_slice(&buf[..n]),
+                Err(_) => break,
+            }
+            if acc.windows(4).filter(|w| *w == b"rgb:").count() >= 18 {
+                break;
+            }
+        }
+    }
+
+    if let Some(s) = &saved {
+        let _ = termios::tcsetattr(&io::stdin(), SetArg::TCSANOW, s);
+    }
+
+    let (palette, leftover) = parse_osc_palette(&acc);
+    render::set_palette(palette);
+    leftover
+}
+
+/// Split accumulated terminal input into OSC color responses (folded into a
+/// palette) and everything else (returned as leftover).
+fn parse_osc_palette(data: &[u8]) -> (render::Palette, Vec<u8>) {
+    let def = render::default_palette();
+    let mut base: [[u8; 3]; 16] = def.ansi[..16].try_into().unwrap();
+    let mut fg = def.fg;
+    let mut bg = def.bg;
+    let mut leftover = Vec::new();
+
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == 0x1b && data.get(i + 1) == Some(&b']') {
+            let body_start = i + 2;
+            let mut j = body_start;
+            let mut term_len = 0;
+            while j < data.len() {
+                if data[j] == 0x07 {
+                    term_len = 1;
+                    break;
+                }
+                if data[j] == 0x1b && data.get(j + 1) == Some(&b'\\') {
+                    term_len = 2;
+                    break;
+                }
+                j += 1;
+            }
+            if term_len == 0 {
+                leftover.extend_from_slice(&data[i..]);
+                break;
+            }
+            parse_osc_body(&data[body_start..j], &mut base, &mut fg, &mut bg);
+            i = j + term_len;
+        } else {
+            leftover.push(data[i]);
+            i += 1;
+        }
+    }
+    (render::palette_from_base(base, fg, bg), leftover)
+}
+
+fn parse_osc_body(body: &[u8], base: &mut [[u8; 3]; 16], fg: &mut [u8; 3], bg: &mut [u8; 3]) {
+    let Ok(s) = std::str::from_utf8(body) else { return };
+    if let Some(rest) = s.strip_prefix("4;") {
+        if let Some((idx, rgb)) = rest.split_once(';') {
+            if let (Ok(i), Some(c)) = (idx.parse::<usize>(), parse_osc_rgb(rgb)) {
+                if i < 16 {
+                    base[i] = c;
+                }
+            }
+        }
+    } else if let Some(rgb) = s.strip_prefix("10;") {
+        if let Some(c) = parse_osc_rgb(rgb) {
+            *fg = c;
+        }
+    } else if let Some(rgb) = s.strip_prefix("11;") {
+        if let Some(c) = parse_osc_rgb(rgb) {
+            *bg = c;
+        }
+    }
+}
+
+/// Parse `rgb:RRRR/GGGG/BBBB` (or 1–4 hex digits per channel), scaling each to
+/// 8 bits.
+fn parse_osc_rgb(s: &str) -> Option<[u8; 3]> {
+    let s = s.strip_prefix("rgb:")?;
+    let mut it = s.split('/');
+    let chan = |h: &str| -> Option<u8> {
+        let v = u32::from_str_radix(h, 16).ok()?;
+        let max = (1u32 << (4 * h.len() as u32)) - 1;
+        Some(((v * 255 + max / 2) / max) as u8)
+    };
+    Some([chan(it.next()?)?, chan(it.next()?)?, chan(it.next()?)?])
+}
+
 fn enter_raw_mode() -> Option<Termios> {
     let stdin = io::stdin();
     let original = termios::tcgetattr(&stdin).ok()?;
@@ -197,10 +332,21 @@ fn run() -> io::Result<i32> {
 
     let original_termios = enter_raw_mode();
 
+    // Query the terminal's colour palette (OSC 4/10/11) so widgets can use
+    // `term(fg)`/`term(bg)`/`term(N)`. Done before the I/O threads start, while
+    // we still have exclusive access to stdin/stdout. Any non-response bytes
+    // (stray user input) are returned and replayed to the child.
+    let stdin_leftover = query_palette();
+
     // stdin -> PTY master
     {
         let mut writer = writer;
+        let leftover = stdin_leftover;
         thread::spawn(move || {
+            if !leftover.is_empty() {
+                let _ = writer.write_all(&leftover);
+                let _ = writer.flush();
+            }
             let mut buf = [0u8; 4096];
             let stdin = io::stdin();
             let mut stdin = stdin.lock();

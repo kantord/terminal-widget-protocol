@@ -79,6 +79,7 @@ pub fn generate_html(
                 "mini-app" => "Mini apps (minimap, heatmap, charts, chat)",
                 "svg" => "Vector graphics (SVG — curves, arcs, gauges)",
                 "term" => "Terminal colors (theme-matched via term())",
+                "term-compare" => "Native vs term() (side by side)",
                 other => other,
             };
             html.push_str(&format!(
@@ -88,7 +89,7 @@ pub fn generate_html(
 
         let showcase = matches!(
             entry.category.as_str(),
-            "css-effects" | "mini-ui" | "mini-app" | "svg" | "term"
+            "css-effects" | "mini-ui" | "mini-app" | "svg" | "term" | "term-compare"
         );
         let summary = entry.result.summary();
         let status_word = summary.split_whitespace().next().unwrap_or("SKIP");
@@ -107,16 +108,20 @@ pub fn generate_html(
             entry.name
         ));
 
-        // Showcase: single TWP pane (no native reference). Otherwise the
-        // usual native-vs-TWP pair.
-        let twp_label = "TWP mono".to_string();
-        let panes: Vec<(&String, &Option<Vec<u8>>)> = if showcase {
-            vec![(&twp_label, &entry.twp_png)]
+        // Two panes whenever there's a native reference image; otherwise a
+        // single TWP pane.
+        let twp_label = if entry.category == "term-compare" {
+            "TWP term()".to_string()
         } else {
+            "TWP mono".to_string()
+        };
+        let panes: Vec<(&String, &Option<Vec<u8>>)> = if entry.native_png.is_some() {
             vec![
                 (&entry.native_label, &entry.native_png),
                 (&twp_label, &entry.twp_png),
             ]
+        } else {
+            vec![(&twp_label, &entry.twp_png)]
         };
         for (label, png_data) in panes {
             html.push_str(&format!("<div class=\"img-box\"><h3>{label}</h3>\n"));

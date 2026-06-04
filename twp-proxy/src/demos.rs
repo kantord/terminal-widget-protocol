@@ -33,7 +33,6 @@ pub fn generated_demos() -> Vec<Demo> {
         svg_line_chart(),
         svg_donut(),
         svg_gauge(),
-        term_palette(),
         term_themed_card(),
         svg_themed_chart(),
     ]
@@ -66,34 +65,63 @@ fn svg_themed_chart() -> Demo {
     Demo { name: "svg_themed_chart", category: "term", cols: 38, rows: 10, scene }
 }
 
-/// Native-vs-TWP palette comparison. The shell prints a `native` row of real
-/// ANSI background swatches (`\e[48;5;Nm`); the TWP widget renders the same 16
-/// colors via `term(0)`…`term(15)` directly beneath it, aligned, so you can
-/// see they match. Proves the proxy's queried palette equals the terminal's.
-/// (The native row is emitted by `native_prefix`.)
-fn term_palette() -> Demo {
-    let swatch = |i: u32| json!({"n":"box","s":{"width":18,"height":22,"background":format!("term({i})")}});
-    let row: Vec<Value> = (0..16).map(swatch).collect();
-    let twp = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","width":"100%","height":"100%","background":"term(bg)"},"c":[
-        json!({"n":"mono","t":"twp     ","s":{"color":"term(fg)"}}),
-        json!({"n":"flex","s":{"flex-direction":"row","gap":0},"c":row})
-    ]});
-    Demo { name: "term_palette", category: "term", cols: 40, rows: 2, scene: json!({"S": twp}) }
+/// A native-vs-TWP comparison: a native terminal command (captured in bare
+/// kitty) shown beside a TWP widget (captured through the proxy), in separate
+/// windows. They can't share one — placeholder images and printed text don't
+/// coexist on screen — so the report places the two screenshots side by side.
+pub struct Comparison {
+    pub name: &'static str,
+    pub category: &'static str,
+    pub native_cmd: String,
+    pub native_cols: u32,
+    pub native_rows: u32,
+    pub twp_cols: u32,
+    pub twp_rows: u32,
+    pub twp_scene: Value,
 }
 
-/// Native terminal output to emit *before* a widget, for side-by-side
-/// comparison. Only `term_palette` uses it: a row of 16 ANSI background
-/// swatches matching the TWP widget's `term()` swatches.
-pub fn native_prefix(name: &str) -> Option<String> {
-    if name != "term_palette" {
-        return None;
-    }
-    let mut s = String::from("printf 'native  '; ");
+pub fn comparison_demos() -> Vec<Comparison> {
+    vec![term_palette_comparison()]
+}
+
+/// Native ANSI palette swatches (`\e[48;5;Nm`) beside the same 16 colors drawn
+/// by TWP via `term(0)`…`term(15)`. Both resolve to the terminal's palette, so
+/// the rows match color-for-color — proving the proxy's queried palette equals
+/// the terminal's.
+fn term_palette_comparison() -> Comparison {
+    // Native: two rows of 8 ANSI background swatches (8 cells each, 2 lines tall
+    // via a leading blank line per row) — sized so the PNG clears the capture
+    // floor.
+    let mut native = String::from("printf '\\n'; ");
     for i in 0..16 {
-        s.push_str(&format!("printf '\\033[48;5;{i}m  \\033[0m'; "));
+        native.push_str(&format!("printf '\\033[48;5;{i}m        \\033[0m'; "));
+        if i == 7 {
+            native.push_str("printf '\\n\\n'; ");
+        }
     }
-    s.push_str("printf '\\n'");
-    Some(s)
+    native.push_str("printf '\\n'");
+
+    // TWP: the same 16 colors via term(N), 2 rows of 8 to match.
+    let swatch = |i: u32| json!({"n":"box","s":{"width":52,"height":40,"background":format!("term({i})")}});
+    let row = |range: std::ops::Range<u32>| {
+        json!({"n":"flex","s":{"flex-direction":"row","gap":2},"c":range.map(swatch).collect::<Vec<_>>()})
+    };
+    let scene = json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"column","gap":4,"justify-content":"center","align-items":"start","width":"100%","height":"100%","background":"term(bg)","padding":6},
+        "c":[row(0..8), row(8..16)]
+    }});
+
+    Comparison {
+        name: "term_palette",
+        category: "term-compare",
+        native_cmd: native,
+        native_cols: 70,
+        native_rows: 5,
+        twp_cols: 48,
+        twp_rows: 5,
+        twp_scene: scene,
+    }
 }
 
 /// A status card with a **transparent** background (so the terminal shows

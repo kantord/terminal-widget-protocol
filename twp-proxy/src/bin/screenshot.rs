@@ -423,9 +423,6 @@ fn capture_window(display: &str, wid: &str, output: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn screenshot_is_nonempty(path: &Path) -> bool {
-    fs::metadata(path).map(|m| m.len() > 500).unwrap_or(false)
-}
 
 fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
     let sig_file = {
@@ -488,6 +485,8 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
         return Err("timed out waiting for render".to_string());
     }
 
+    // Poll until the capture is non-empty (>500 bytes also lets slow software
+    // rendering finish before we grab the frame).
     let capture_timeout = Duration::from_secs(10);
     let capture_start = Instant::now();
     let mut captured = false;
@@ -496,7 +495,8 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
         thread::sleep(Duration::from_secs(1));
         if let Some(wid) = find_window(&cfg.display, &cfg.class) {
             if capture_window(&cfg.display, &wid, &cfg.output) {
-                if screenshot_is_nonempty(&cfg.output) {
+                let len = fs::metadata(&cfg.output).map(|m| m.len()).unwrap_or(0);
+                if len > 500 {
                     captured = true;
                     break;
                 }
@@ -673,6 +673,9 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
     // ── Showcase: render-only effects & widgets (no comparison) ────
     let display = xvfb.display().to_string();
 
+    // Scoped so the `entries`-borrowing closure is dropped before the
+    // comparison loop below (which also touches `entries`).
+    {
     // Capture one render-only showcase widget and record it. Returns whether
     // it rendered. `cols`/`rows` control the kitty window the widget renders
     // into (bigger widgets need a bigger window).
@@ -760,21 +763,71 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
         let twp_cmd = demo_twp_cmd(demo.cols, demo.rows, &demo.scene);
         // Render into a window a little larger than the widget so nothing
         // is clipped at the edges.
-        let (win_c, mut win_r) = (demo.cols + 6, demo.rows + 4);
-        // Some demos print a native-terminal reference line first (e.g. the
-        // palette comparison); prepend it and leave room for it.
-        let cmd = match demos::native_prefix(demo.name) {
-            Some(prefix) => {
-                win_r += 2;
-                format!("{prefix}; {twp_cmd}")
-            }
-            None => twp_cmd,
-        };
-        if run_showcase(demo.name, demo.category, cmd, win_c, win_r) {
+        let (win_c, win_r) = (demo.cols + 6, demo.rows + 4);
+        if run_showcase(demo.name, demo.category, twp_cmd, win_c, win_r) {
             pass += 1;
         } else {
             fail += 1;
         }
+    }
+
+    } // end run_showcase scope
+
+    // Native-vs-TWP comparisons: capture a native terminal command and a TWP
+    // widget in *separate* windows (they can't share one — placeholder images
+    // and printed text don't coexist on screen), shown side by side.
+    eprintln!("── Native vs term() (side by side) ──");
+    for cmp in demos::comparison_demos() {
+        eprint!("  {}: ", cmp.name);
+        let native_cfg = CaptureConfig {
+            output: cfg.results_dir.join(format!("kitty_{}.png", cmp.name)),
+            display: display.clone(),
+            proxy: None,
+            font: cfg.font.clone(),
+            font_size: cfg.font_size.clone(),
+            cols: cmp.native_cols,
+            rows: cmp.native_rows,
+            bg: "#0a1e24".to_string(),
+            fg: "#ecefc1".to_string(),
+            class: "twp-screenshot".to_string(),
+            timeout: 15,
+            command: vec![cmp.native_cmd.clone()],
+        };
+        let twp_cfg = CaptureConfig {
+            output: cfg.results_dir.join(format!("twp_{}.png", cmp.name)),
+            display: display.clone(),
+            proxy: Some(cfg.proxy_path.clone()),
+            font: cfg.font.clone(),
+            font_size: cfg.font_size.clone(),
+            cols: cmp.twp_cols + 6,
+            rows: cmp.twp_rows + 4,
+            bg: "#0a1e24".to_string(),
+            fg: "#ecefc1".to_string(),
+            class: "twp-screenshot".to_string(),
+            timeout: 15,
+            command: vec![demo_twp_cmd(cmp.twp_cols, cmp.twp_rows, &cmp.twp_scene)],
+        };
+        let native_png = capture_one(&native_cfg).ok();
+        let twp_png = capture_one(&twp_cfg).ok();
+        let ok = native_png.is_some() && twp_png.is_some();
+        eprintln!("{}", if ok { "RENDERED" } else { "FAIL" });
+        if ok {
+            pass += 1;
+        } else {
+            fail += 1;
+        }
+        entries.push(TestEntry {
+            name: cmp.name.to_string(),
+            result: if ok {
+                CompareResult { status: TestStatus::Pass, matches: 0, total: 0, mismatches: vec![] }
+            } else {
+                CompareResult { status: TestStatus::Fail("render failed".into()), matches: 0, total: 0, mismatches: vec![] }
+            },
+            native_png,
+            twp_png,
+            category: cmp.category.to_string(),
+            native_label: "Kitty native (ANSI 48;5;n)".to_string(),
+        });
     }
 
     let total = pass + fail + skip;

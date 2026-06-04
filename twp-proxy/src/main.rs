@@ -135,6 +135,10 @@ fn pty_size_from_winsize(ws: &libc::winsize) -> PtySize {
 fn query_palette() -> Vec<u8> {
     use std::time::{Duration, Instant};
 
+    if std::env::var("TWP_NO_QUERY").is_ok() {
+        return Vec::new();
+    }
+
     let stdin = io::stdin();
     // Temporarily make reads time out (VMIN=0, VTIME=1 → 0.1s) so we don't
     // block forever on a terminal that never answers.

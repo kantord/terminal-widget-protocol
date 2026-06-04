@@ -877,6 +877,55 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
         });
     }
 
+    // Theme-derived demos: the same widget rendered once per terminal theme
+    // (palette installed one-off), every colour derived from term()/color-mix.
+    eprintln!("── Theme-derived widgets (term() + color-mix) ──");
+    for td in demos::themed_demos() {
+        eprint!("  {}: ", td.name);
+        let palette: Vec<String> = td
+            .theme
+            .ansi
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("color{i}={c}"))
+            .collect();
+        let cfg_td = CaptureConfig {
+            output: cfg.results_dir.join(format!("twp_{}.png", td.name)),
+            display: display.clone(),
+            proxy: Some(cfg.proxy_path.clone()),
+            font: cfg.font.clone(),
+            font_size: cfg.font_size.clone(),
+            cols: td.cols + 6,
+            rows: td.rows + 4,
+            bg: td.theme.bg.to_string(),
+            fg: td.theme.fg.to_string(),
+            palette,
+            class: "twp-screenshot".to_string(),
+            timeout: 15,
+            command: vec![demo_twp_cmd(td.cols, td.rows, &td.scene)],
+        };
+        let twp_png = capture_one(&cfg_td).ok();
+        let ok = twp_png.is_some();
+        eprintln!("{}", if ok { "RENDERED" } else { "FAIL" });
+        if ok {
+            pass += 1;
+        } else {
+            fail += 1;
+        }
+        entries.push(TestEntry {
+            name: format!("{} — {}", td.name, td.label),
+            result: if ok {
+                CompareResult { status: TestStatus::Pass, matches: 0, total: 0, mismatches: vec![] }
+            } else {
+                CompareResult { status: TestStatus::Fail("render failed".into()), matches: 0, total: 0, mismatches: vec![] }
+            },
+            native_png: None,
+            twp_png,
+            category: td.category.to_string(),
+            native_label: String::new(),
+        });
+    }
+
     let total = pass + fail + skip;
     eprintln!();
     eprintln!("==========================");

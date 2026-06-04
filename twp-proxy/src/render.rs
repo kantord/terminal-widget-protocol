@@ -197,19 +197,40 @@ fn discover_fonts() -> FontSet {
     }
     if std::env::var("KITTY_WINDOW_ID").is_ok() {
         let kitty = read_kitty_fonts();
-        if kitty.regular.is_some() {
+        if let Some(reg) = kitty.regular.clone() {
+            // Kitty's `auto`/`none` for bold_font/italic_font are *directives*
+            // ("derive from font_family"), not real font names. Passing them to
+            // fc-match yields a proportional fallback (e.g. Noto Sans), which
+            // wrecks the monospace grid for bold/italic mono text. So resolve
+            // those slots from the regular family with a fontconfig style query
+            // instead, getting the matching *monospace* face.
+            let variant = |slot: Option<&str>, style: &str| -> Option<std::path::PathBuf> {
+                match slot {
+                    Some(v)
+                        if !matches!(
+                            v.trim().to_ascii_lowercase().as_str(),
+                            "auto" | "none" | ""
+                        ) =>
+                    {
+                        fc_match(v)
+                    }
+                    _ => fc_match(&format!("{reg}:{style}")),
+                }
+            };
             return FontSet {
-                regular: kitty.regular.as_deref().and_then(fc_match),
-                bold: kitty.bold.as_deref().and_then(fc_match),
-                italic: kitty.italic.as_deref().and_then(fc_match),
-                bold_italic: kitty.bold_italic.as_deref().and_then(fc_match),
+                regular: fc_match(&reg),
+                bold: variant(kitty.bold.as_deref(), "bold"),
+                italic: variant(kitty.italic.as_deref(), "italic"),
+                bold_italic: variant(kitty.bold_italic.as_deref(), "bold:italic"),
             };
         }
     }
     if let Some(path) = fc_match("monospace") {
         return FontSet {
             regular: Some(path),
-            ..FontSet::default()
+            bold: fc_match("monospace:bold"),
+            italic: fc_match("monospace:italic"),
+            bold_italic: fc_match("monospace:bold:italic"),
         };
     }
     for p in FONT_PROBE {
@@ -313,12 +334,30 @@ fn context() -> &'static GlobalContext {
         // Each variant gets a unique family name — we select the right
         // one explicitly in build_style rather than relying on parley's
         // weight-matching (which doesn't reliably pick overridden variants).
+        // The bold/italic slots fall back to the regular face when no real
+        // variant was found. The result may not look bolder, but it stays
+        // monospace — never a proportional fallback that breaks the cell grid.
         load_variant(&mut ctx, set.regular.as_deref(), FAMILY_REGULAR, false, false);
-        load_variant(&mut ctx, set.bold.as_deref(), FAMILY_BOLD, true, false);
-        load_variant(&mut ctx, set.italic.as_deref(), FAMILY_ITALIC, false, true);
         load_variant(
             &mut ctx,
-            set.bold_italic.as_deref(),
+            set.bold.as_deref().or(set.regular.as_deref()),
+            FAMILY_BOLD,
+            true,
+            false,
+        );
+        load_variant(
+            &mut ctx,
+            set.italic.as_deref().or(set.regular.as_deref()),
+            FAMILY_ITALIC,
+            false,
+            true,
+        );
+        load_variant(
+            &mut ctx,
+            set.bold_italic
+                .as_deref()
+                .or(set.bold.as_deref())
+                .or(set.regular.as_deref()),
             FAMILY_BOLD_ITALIC,
             true,
             true,
@@ -640,6 +679,19 @@ fn css_passthrough_decls(extra: &HashMap<String, serde_json::Value>) -> Vec<Styl
     decls
 }
 
+/// Resolve a colour value for CSS property `prop` (e.g. `"background-color"`,
+/// `"color"`) into a takumi declaration via its full colour parser, after
+/// `term()` substitution. This is the fallback for the typed `color` /
+/// `background` fields when our simple `parse_color` doesn't recognise the
+/// value — enabling *derived* colours like `color-mix(in srgb, term(2) 18%,
+/// term(bg))` and relative `rgb(from term(1) r g b / .3)` in those fields.
+fn color_decl(prop: &str, value: &str) -> Option<StyleDeclaration> {
+    let css = format!("{prop}: {}", substitute_term(value));
+    css.parse::<StyleDeclarationBlock>()
+        .ok()
+        .and_then(|block| block.iter().next().cloned())
+}
+
 /// Build a monospace-grid text node: each character gets its own
 /// fixed-width cell box, so glyph positions are determined by the grid
 /// and not by the font's advance width. Zero drift by construction.
@@ -669,7 +721,13 @@ fn build_mono(node: &Node) -> TakumiNode {
         _ => 400,
     };
     let family_key = if weight >= 700 { FAMILY_BOLD } else { FAMILY_REGULAR };
-    let fg_color = s.color.as_deref().and_then(parse_color);
+    // Foreground as a declaration: fast path via parse_color (term/hex), else
+    // takumi's colour parser for derived colours (color-mix(), relative rgb()).
+    let fg_decl: Option<StyleDeclaration> = s.color.as_deref().and_then(|v| {
+        parse_color(v)
+            .map(|c| StyleDeclaration::color(ColorInput::from(c)))
+            .or_else(|| color_decl("color", v))
+    });
 
     // Text effects (text-shadow, opacity, stroke, …) come through the CSS
     // passthrough and apply per glyph. Parsed once, cloned onto each cell.
@@ -695,9 +753,8 @@ fn build_mono(node: &Node) -> TakumiNode {
             // Don't set font-weight — we already selected the correct
             // font file via family_key. Requesting weight 700 on a font
             // whose internal metadata says 400 makes parley fail to match.
-            if let Some(c) = fg_color {
-                char_style =
-                    char_style.with(StyleDeclaration::color(ColorInput::from(c)));
+            if let Some(d) = &fg_decl {
+                char_style = char_style.with(d.clone());
             }
             for decl in &extra_decls {
                 char_style = char_style.with(decl.clone());
@@ -721,9 +778,13 @@ fn build_mono(node: &Node) -> TakumiNode {
         .with(StyleDeclaration::align_items(AlignItems::Center));
 
     // Apply visual styling from the node (background, padding, etc.).
-    if let Some(bg) = s.background.as_deref().and_then(parse_color) {
-        outer_style =
-            outer_style.with(StyleDeclaration::background_color(ColorInput::from(bg)));
+    if let Some(v) = s.background.as_deref() {
+        if let Some(bg) = parse_color(v) {
+            outer_style =
+                outer_style.with(StyleDeclaration::background_color(ColorInput::from(bg)));
+        } else if let Some(d) = color_decl("background-color", v) {
+            outer_style = outer_style.with(d);
+        }
     }
     if let Some(w) = s.width {
         outer_style = outer_style.with(StyleDeclaration::width(to_length(w)));
@@ -793,11 +854,19 @@ fn build_style(node: &Node) -> TkStyle {
     }
 
     // Visual
-    if let Some(bg) = s.background.as_deref().and_then(parse_color) {
-        style = style.with(StyleDeclaration::background_color(ColorInput::from(bg)));
+    if let Some(v) = s.background.as_deref() {
+        if let Some(bg) = parse_color(v) {
+            style = style.with(StyleDeclaration::background_color(ColorInput::from(bg)));
+        } else if let Some(d) = color_decl("background-color", v) {
+            style = style.with(d);
+        }
     }
-    if let Some(c) = s.color.as_deref().and_then(parse_color) {
-        style = style.with(StyleDeclaration::color(ColorInput::from(c)));
+    if let Some(v) = s.color.as_deref() {
+        if let Some(c) = parse_color(v) {
+            style = style.with(StyleDeclaration::color(ColorInput::from(c)));
+        } else if let Some(d) = color_decl("color", v) {
+            style = style.with(d);
+        }
     }
     if let Some(r) = s.border_radius {
         let pair = SpacePair::from_single(to_length_zero(r));

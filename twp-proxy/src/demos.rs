@@ -22,14 +22,12 @@ pub struct Demo {
 pub fn generated_demos() -> Vec<Demo> {
     vec![
         code_minimap(),
-        markdown_doc(),
         contribution_heatmap(),
         bar_chart(),
         chat_bubbles(),
         wikipedia_article(),
         profile_card(),
         image_gallery(),
-        diff_review(),
         svg_line_chart(),
         svg_donut(),
         svg_gauge(),
@@ -379,15 +377,67 @@ fn svg_gauge() -> Demo {
     Demo { name: "app_gauge", category: "svg", cols: 30, rows: 9, scene }
 }
 
-/// A code-review diff: a syntax-tinted hunk (added / removed / context lines,
-/// GitHub-dark colours) with an inline review comment — a real avatar
-/// (Grace Hopper's public-domain Navy portrait) beside a message bubble that
-/// casts a drop shadow.
-fn diff_review() -> Demo {
+/// A demo plus the terminal theme to render it under — captured one-off with
+/// that palette installed, so the *same* scene re-tones itself to each theme.
+pub struct ThemedDemo {
+    pub name: String,
+    pub label: String,
+    pub category: &'static str,
+    pub cols: u32,
+    pub rows: u32,
+    pub scene: Value,
+    pub theme: Theme,
+}
+
+/// The code-review diff, rendered once per theme. The point: a real, sensible
+/// UI whose every colour is *derived from the terminal palette* — proving the
+/// theming story holds up beyond solid swatches.
+pub fn themed_demos() -> Vec<ThemedDemo> {
+    themes()
+        .into_iter()
+        .map(|theme| {
+            let slug = theme.name.to_lowercase().replace(' ', "_");
+            ThemedDemo {
+                name: format!("diff_review_{slug}"),
+                label: theme.name.to_string(),
+                category: "term-themed",
+                cols: 74,
+                rows: 16,
+                scene: diff_review_scene(),
+                theme,
+            }
+        })
+        .collect()
+}
+
+/// A code-review diff (added / removed / context lines + an inline review
+/// comment from Grace Hopper's public-domain Navy portrait).
+///
+/// Every colour is derived from the terminal palette — no hardcoded hex:
+///   * solid roles use `term()` directly (added = `term(2)`, removed =
+///     `term(1)`, text = `term(fg)`);
+///   * tones in between are *computed* with `color-mix()` — an added-line
+///     background is the green accent mixed a little into the editor
+///     background, "muted" text is the foreground pulled toward the
+///     background, panels/borders are subtle lifts off `term(bg)`.
+/// Re-tones itself to any palette with zero per-theme code.
+fn diff_review_scene() -> Value {
     const AVATAR: &[u8] = include_bytes!("../demo/assets/grace_hopper.jpg");
-    let code_fg = "#adbac7";
     let sans = "twp-sans";
     let sans_b = "twp-sans-b";
+
+    // Derived design tokens. `color-mix(in srgb, A p%, B)` = p% of A over B.
+    let editor = "term(bg)";
+    let surface = "color-mix(in srgb, term(fg) 7%, term(bg))"; // raised panel
+    let surface2 = "color-mix(in srgb, term(fg) 13%, term(bg))"; // popover
+    let border = "color-mix(in srgb, term(fg) 22%, term(bg))";
+    let muted = "color-mix(in srgb, term(fg) 45%, term(bg))"; // gutter / meta
+    let body = "color-mix(in srgb, term(fg) 80%, term(bg))"; // comment body
+    let fg = "term(fg)";
+    let add = "term(2)";
+    let del = "term(1)";
+    let add_bg = "color-mix(in srgb, term(2) 15%, term(bg))";
+    let del_bg = "color-mix(in srgb, term(1) 15%, term(bg))";
 
     // (gutter, kind, sign, code)
     let lines: Vec<(&str, &str, &str, &str)> = vec![
@@ -400,33 +450,37 @@ fn diff_review() -> Demo {
         .iter()
         .map(|(gutter, kind, sign, code)| {
             let (bg, sign_color) = match *kind {
-                "add" => ("#12261c", "#3fb950"),
-                "del" => ("#2d1214", "#f85149"),
-                _ => ("#0d1117", "#6e7681"),
+                "add" => (add_bg, add),
+                "del" => (del_bg, del),
+                _ => (editor, muted),
             };
             json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":10,"width":"100%","background":bg,"padding":2},"c":[
-                json!({"n":"mono","t":gutter,"s":{"color":"#6e7681"}}),
+                json!({"n":"mono","t":gutter,"s":{"color":muted}}),
                 json!({"n":"flex","s":{"flex-direction":"row"},"c":[
                     json!({"n":"mono","t":sign,"s":{"color":sign_color,"font-weight":"bold"}}),
-                    json!({"n":"mono","t":code,"s":{"color":code_fg}})
+                    json!({"n":"mono","t":code,"s":{"color":fg}})
                 ]})
             ]})
         })
         .collect();
 
-    let file_header = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","padding":6,"background":"#161b22","border-radius":6},"c":[
-        json!({"n":"mono","t":"src/render.rs","s":{"color":"#adbac7"}})
+    let file_header = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","padding":6,"background":surface,"border-radius":6},"c":[
+        json!({"n":"mono","t":"src/render.rs","s":{"color":body}})
     ]});
-    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":1,"padding":4,"background":"#0d1117","border-radius":6,"border":{"width":1,"color":"#30363d"}},"c":diff_rows});
+    // Border colour is derived (color-mix), so it goes through the CSS
+    // passthrough longhands rather than the typed `border` (which only takes a
+    // plain colour).
+    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":1,"padding":4,"background":editor,"border-radius":6,"border-width":"1px","border-style":"solid","border-color":border},"c":diff_rows});
 
-    // Inline review comment: avatar (with online dot) + shadowed bubble.
-    let avatar = avatar_with_status(STANDARD.encode(AVATAR), 36, "#3fb950", "#0d1117");
+    // Inline review comment: avatar (with online dot) + shadowed bubble. The
+    // dot's ring is the editor background so it reads as cut into the surface.
+    let avatar = avatar_with_status(STANDARD.encode(AVATAR), 36, add, editor);
     let author = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":6},"c":[
-        json!({"n":"text","t":"Grace Hopper","s":{"color":"#f0f6fc","font-size":13,"font-family":sans_b,"letter-spacing":"0px"}}),
-        json!({"n":"text","t":"reviewed 2h ago","s":{"color":"#8b949e","font-size":11,"font-family":sans,"letter-spacing":"0px"}})
+        json!({"n":"text","t":"Grace Hopper","s":{"color":fg,"font-size":13,"font-family":sans_b,"letter-spacing":"0px"}}),
+        json!({"n":"text","t":"reviewed 2h ago","s":{"color":muted,"font-size":11,"font-family":sans,"letter-spacing":"0px"}})
     ]});
-    let comment_text = json!({"n":"text","t":"Good — a named constant beats a magic number. Ship it.","s":{"color":"#c9d1d9","font-size":13,"font-family":sans,"letter-spacing":"0px"}});
-    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":5,"padding":10,"background":"#2d333b","border-radius":10,"border":{"width":1,"color":"#444c56"},"box-shadow":"0 8px 22px #000000aa","max-width":"62%"},"c":[author, comment_text]});
+    let comment_text = json!({"n":"text","t":"Good — a named constant beats a magic number. Ship it.","s":{"color":body,"font-size":13,"font-family":sans,"letter-spacing":"0px"}});
+    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":5,"padding":10,"background":surface2,"border-radius":10,"border-width":"1px","border-style":"solid","border-color":border,"box-shadow":"0 8px 22px #00000055","max-width":"62%"},"c":[author, comment_text]});
     let comment = json!({"n":"flex","s":{"flex-direction":"row","align-items":"start","gap":10},"c":[avatar, bubble]});
 
     // The comment floats *over* the diff (a review popover), positioned by a
@@ -435,13 +489,11 @@ fn diff_review() -> Demo {
     let floating = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","height":"100%","justify-content":"flex-start","align-items":"flex-start","padding-top":"62px","padding-left":"90px"},"c":[comment]});
     let stack = json!({"n":"stack","s":{"width":"100%","height":190},"c":[diff_box, floating]});
 
-    let scene = json!({"S":{
+    json!({"S":{
         "n":"flex",
-        "s":{"flex-direction":"column","gap":12,"padding":18,"width":"100%","height":"100%","background":"#0d1117"},
+        "s":{"flex-direction":"column","gap":12,"padding":18,"width":"100%","height":"100%","background":editor},
         "c":[file_header, stack]
-    }});
-
-    Demo { name: "app_diff_review", category: "mini-app", cols: 74, rows: 16, scene }
+    }})
 }
 
 /// A Wikipedia-style article: a title, wrapping prose in a text column, and a
@@ -579,67 +631,6 @@ fn image_gallery() -> Demo {
     }});
 
     Demo { name: "app_gallery", category: "mini-app", cols: 66, rows: 8, scene }
-}
-
-/// A rendered Markdown document: heading hierarchy at real, different font
-/// sizes, a bulleted list, a code block with its own background, and a
-/// blockquote with an accent bar — none of which a terminal can do (it has
-/// one font at one size).
-fn markdown_doc() -> Demo {
-    let head = "#e6edf3";
-    let body = "#c9d1d9";
-    let muted = "#8b949e";
-    let accent = "#58a6ff";
-    let str_c = "#a5d6ff";
-    let fn_c = "#d2a8ff";
-    // Proportional family registered by the renderer (falls back to a system
-    // sans if unavailable). letter-spacing:0 neutralises the mono cell-grid
-    // tuning that build_style applies to every text node.
-    let sans = "twp-sans";
-    let sans_b = "twp-sans-b";
-
-    let h1 = json!({"n":"text","t":"Terminal Widget Protocol","s":{"color":head,"font-size":26,"font-family":sans_b,"letter-spacing":"0px"}});
-    let lede = json!({"n":"text","t":"Render rich UI inline in your terminal — real font sizes, colour, and layout.","s":{"color":body,"font-size":15,"font-family":sans,"letter-spacing":"0px"}});
-
-    let h2 = json!({"n":"text","t":"Features","s":{"color":head,"font-size":18,"font-family":sans_b,"letter-spacing":"0px"}});
-    let divider = json!({"n":"box","s":{"width":"100%","height":1,"background":"#30363d"}});
-
-    let bullet = |s: &str| {
-        json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":8},"c":[
-            json!({"n":"box","s":{"width":5,"height":5,"border-radius":3,"background":accent}}),
-            json!({"n":"text","t":s,"s":{"color":body,"font-size":14,"font-family":sans,"letter-spacing":"0px"}})
-        ]})
-    };
-    let bullets = json!({"n":"flex","s":{"flex-direction":"column","gap":6},"c":[
-        bullet("Proportional font sizes for headings and body"),
-        bullet("Backgrounds, rounding, shadows, and gradients"),
-        bullet("Flexbox layout for assembling real widgets"),
-    ]});
-
-    let code_line = |segs: Vec<(&str, &str)>| {
-        let kids: Vec<Value> = segs
-            .iter()
-            .map(|(t, c)| json!({"n":"mono","t":t,"s":{"color":c}}))
-            .collect();
-        json!({"n":"flex","s":{"flex-direction":"row","height":20},"c":kids})
-    };
-    let code_block = json!({"n":"flex","s":{"flex-direction":"column","padding":10,"border-radius":8,"background":"#161b22"},"c":[
-        code_line(vec![("twp ", fn_c), ("'v=1,c=8,r=2' ", muted)]),
-        code_line(vec![("    '{\"S\":{\"n\":\"mono\",\"t\":", muted), ("\"OK\"", str_c), ("}}'", muted)]),
-    ]});
-
-    let quote = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":10},"c":[
-        json!({"n":"box","s":{"width":4,"height":18,"border-radius":2,"background":"#30363d"}}),
-        json!({"n":"text","t":"Note: pure software rendering — works over SSH, no GPU required.","s":{"color":muted,"font-size":13,"font-family":sans,"letter-spacing":"0px"}})
-    ]});
-
-    let scene = json!({"S":{
-        "n":"flex",
-        "s":{"flex-direction":"column","gap":12,"padding":22,"width":"100%","height":"100%","background":"#0d1117"},
-        "c":[h1, lede, h2, divider, bullets, code_block, quote]
-    }});
-
-    Demo { name: "app_markdown", category: "mini-app", cols: 66, rows: 22, scene }
 }
 
 /// Sublime-style code panel + minimap. The code is mono text (a terminal

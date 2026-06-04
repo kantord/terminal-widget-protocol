@@ -455,6 +455,22 @@ mod tests {
     }
 
     #[test]
+    fn color_mix_resolves_in_typed_background() {
+        // `color-mix` isn't understood by our simple parse_color — it must fall
+        // back to takumi's colour parser. Mixing red+blue 50/50 in sRGB gives a
+        // purple (~#800080): the centre pixel should have strong red AND blue
+        // and little green.
+        let json = "{\"S\":{\"n\":\"box\",\"s\":{\"width\":\"100%\",\"height\":\"100%\",\
+            \"background\":\"color-mix(in srgb, #ff0000 50%, #0000ff)\"}}}";
+        let img = render_payload(json, 6, 3);
+        let p = img.get_pixel(img.width() / 2, img.height() / 2);
+        assert!(
+            p[0] > 90 && p[2] > 90 && p[1] < 60,
+            "color-mix should yield purple, got {p:?}"
+        );
+    }
+
+    #[test]
     fn img_missing_source_degrades_without_panic() {
         // No `d`/`path` — must not panic, just renders nothing for the node.
         let json = "{\"S\":{\"n\":\"img\",\"s\":{\"width\":20,\"height\":20}}}";

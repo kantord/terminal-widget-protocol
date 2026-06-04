@@ -80,6 +80,7 @@ pub fn generate_html(
                 "svg" => "Vector graphics (SVG — curves, arcs, gauges)",
                 "term" => "Terminal colors (theme-matched via term())",
                 "term-compare" => "term() reacts to the session theme (native ANSI vs TWP, per theme)",
+                "term-themed" => "Theme-derived widget — every colour from term() + color-mix()",
                 other => other,
             };
             html.push_str(&format!(
@@ -90,6 +91,7 @@ pub fn generate_html(
         let showcase = matches!(
             entry.category.as_str(),
             "css-effects" | "mini-ui" | "mini-app" | "svg" | "term" | "term-compare"
+                | "term-themed"
         );
         let summary = entry.result.summary();
         let status_word = summary.split_whitespace().next().unwrap_or("SKIP");

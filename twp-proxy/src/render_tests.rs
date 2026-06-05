@@ -455,6 +455,68 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "preview dump, run with --ignored"]
+    fn dump_docker_preview() {
+        // No set_cell_pixels → default 20×40, deliberately NOT the 13×29 it was
+        // authored at. With cell units it should still be perfectly aligned.
+        let demos = crate::demos::themed_demos();
+        let td = demos
+            .iter()
+            .find(|d| d.name.starts_with("docker_dashboard"))
+            .unwrap();
+        let json = serde_json::to_string(&td.scene).unwrap();
+        let img = render_payload(&json, td.cols, td.rows);
+        img.save("/tmp/docker_preview.png").unwrap();
+    }
+
+    #[test]
+    fn cell_units_resolve_against_cell_size() {
+        // A box `4mcw` wide on a 6-col canvas should fill 4/6 of the width in
+        // ink. (Default in-process cell is 20×40, but the ratio is what matters
+        // and is cell-size independent.)
+        let json = "{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%\",\"height\":\"100%\"},\"c\":[\
+            {\"n\":\"box\",\"s\":{\"width\":\"4mcw\",\"height\":\"100%\",\"background\":\"#ff0000\"}}\
+        ]}}";
+        let img = render_payload(json, 6, 2);
+        let y = img.height() / 2;
+        let red: u32 = (0..img.width())
+            .filter(|&x| {
+                let p = img.get_pixel(x, y);
+                p[0] > 180 && p[1] < 80
+            })
+            .count() as u32;
+        let frac = red as f32 / img.width() as f32;
+        assert!(
+            (frac - 4.0 / 6.0).abs() < 0.06,
+            "4mcw of 6 cols should be ~0.667 of width, got {frac:.3}"
+        );
+    }
+
+    #[test]
+    fn cell_min_is_square_in_pixels() {
+        // `1mcmin` width and height must yield an equal *pixel* box even though
+        // the cell is non-square — both resolve to min(px_per_col, px_per_row).
+        let json = "{\"S\":{\"n\":\"box\",\"s\":{\"width\":\"2mcmin\",\"height\":\"2mcmin\",\"background\":\"#00ff00\"}}}";
+        let img = render_payload(json, 6, 4);
+        let mut max_x = 0;
+        let mut max_y = 0;
+        for y in 0..img.height() {
+            for x in 0..img.width() {
+                let p = img.get_pixel(x, y);
+                if p[1] > 180 && p[0] < 80 {
+                    max_x = max_x.max(x);
+                    max_y = max_y.max(y);
+                }
+            }
+        }
+        let (w, h) = (max_x + 1, max_y + 1);
+        assert!(
+            (w as i32 - h as i32).abs() <= 2,
+            "mcmin box should be square in pixels, got {w}x{h}"
+        );
+    }
+
+    #[test]
     fn color_mix_resolves_in_typed_background() {
         // `color-mix` isn't understood by our simple parse_color — it must fall
         // back to takumi's colour parser. Mixing red+blue 50/50 in sRGB gives a

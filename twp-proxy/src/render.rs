@@ -147,6 +147,66 @@ pub(crate) fn substitute_term(value: &str) -> String {
     out
 }
 
+/// Resolve `m`-cell units (`3mcw`, `0.5mch`, `1mcmin`, `1mcmax`) embedded in a
+/// CSS *value* string to pixels, so they work in the passthrough path too (not
+/// just the typed `width`/`height`/`gap`/`padding` fields). Anything that isn't
+/// `<number><cell-unit>` is copied through untouched.
+pub(crate) fn substitute_cell_units(value: &str) -> String {
+    let pc = px_per_col() as f32;
+    let pr = px_per_row() as f32;
+    let units: [(&str, f32); 4] = [
+        ("mcmin", pc.min(pr)),
+        ("mcmax", pc.max(pr)),
+        ("mcw", pc),
+        ("mch", pr),
+    ];
+    let b = value.as_bytes();
+    let mut out = String::with_capacity(value.len());
+    let mut i = 0;
+    let mut copied = 0; // bytes [copied..) not yet flushed to `out`
+    while i < b.len() {
+        let starts_num =
+            b[i].is_ascii_digit() || (b[i] == b'.' && i + 1 < b.len() && b[i + 1].is_ascii_digit());
+        if !starts_num {
+            i += 1;
+            continue;
+        }
+        let num_start = i;
+        let mut j = i;
+        while j < b.len() && (b[j].is_ascii_digit() || b[j] == b'.') {
+            j += 1;
+        }
+        let rest = &value[j..];
+        let mut matched = false;
+        for (suffix, mult) in units {
+            let Some(after) = rest.strip_prefix(suffix) else {
+                continue;
+            };
+            // The unit must end at a non-alphanumeric boundary (so we don't
+            // rewrite the `mcw` inside a hypothetical `3mcworld`).
+            let boundary = after
+                .as_bytes()
+                .first()
+                .is_none_or(|c| !c.is_ascii_alphanumeric());
+            if boundary {
+                if let Ok(n) = value[num_start..j].parse::<f32>() {
+                    out.push_str(&value[copied..num_start]);
+                    out.push_str(&format!("{}px", n * mult));
+                    i = j + suffix.len();
+                    copied = i;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if !matched {
+            i = j; // leave the bare number for the next bulk copy
+        }
+    }
+    out.push_str(&value[copied..]);
+    out
+}
+
 /// Final-fallback font paths if every other discovery mechanism fails.
 const FONT_PROBE: &[&str] = &[
     "/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
@@ -669,8 +729,9 @@ fn css_passthrough_decls(extra: &HashMap<String, serde_json::Value>) -> Vec<Styl
             // arrays / objects / null are not valid CSS values
             _ => continue,
         };
-        // Resolve any `term(...)` palette tokens before takumi parses the value.
-        let css = format!("{key}: {}", substitute_term(&val));
+        // Resolve `term(...)` palette tokens and `m`-cell units before takumi
+        // parses the value.
+        let css = format!("{key}: {}", substitute_cell_units(&substitute_term(&val)));
         match css.parse::<StyleDeclarationBlock>() {
             Ok(block) => decls.extend(block.iter().cloned()),
             Err(_) => eprintln!("twp-proxy: ignoring invalid CSS property: {css}"),
@@ -831,13 +892,13 @@ fn build_style(node: &Node) -> TkStyle {
         style = style.with(StyleDeclaration::align_items(ai));
     }
     if let Some(gap) = s.gap {
-        let len = LengthDefaultsToZero::Px(gap);
+        let len = to_length_zero(gap);
         style = style
             .with(StyleDeclaration::column_gap(len))
             .with(StyleDeclaration::row_gap(len));
     }
     if let Some(p) = s.padding {
-        let len = LengthDefaultsToZero::Px(p);
+        let len = to_length_zero(p);
         style = style
             .with(StyleDeclaration::padding_top(len))
             .with(StyleDeclaration::padding_right(len))
@@ -956,17 +1017,38 @@ fn apply_border(style: &mut TkStyle, b: &Border) {
     *style = next;
 }
 
+/// Resolve a cell unit (mcw/mch/mcmin/mcmax) to pixels against the live cell
+/// size; returns `None` for px/percent (handled by the callers below).
+fn cell_unit_px(d: Dimension) -> Option<f32> {
+    let (pc, pr) = (px_per_col() as f32, px_per_row() as f32);
+    match d {
+        Dimension::ColWidth(v) => Some(v * pc),
+        Dimension::RowHeight(v) => Some(v * pr),
+        Dimension::CellMin(v) => Some(v * pc.min(pr)),
+        Dimension::CellMax(v) => Some(v * pc.max(pr)),
+        _ => None,
+    }
+}
+
 fn to_length(d: Dimension) -> Length {
+    if let Some(px) = cell_unit_px(d) {
+        return Length::Px(px);
+    }
     match d {
         Dimension::Px(v) => Length::Px(v),
         Dimension::Percent(v) => Length::Percentage(v),
+        _ => unreachable!("cell units handled above"),
     }
 }
 
 fn to_length_zero(d: Dimension) -> LengthDefaultsToZero {
+    if let Some(px) = cell_unit_px(d) {
+        return LengthDefaultsToZero::Px(px);
+    }
     match d {
         Dimension::Px(v) => LengthDefaultsToZero::Px(v),
         Dimension::Percent(v) => LengthDefaultsToZero::Percentage(v),
+        _ => unreachable!("cell units handled above"),
     }
 }
 

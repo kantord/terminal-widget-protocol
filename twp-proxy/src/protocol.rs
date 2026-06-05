@@ -108,8 +108,8 @@ pub struct Style {
     pub justify_content: Option<String>,
     #[serde(rename = "align-items")]
     pub align_items: Option<String>,
-    pub gap: Option<f32>,
-    pub padding: Option<f32>,
+    pub gap: Option<Dimension>,
+    pub padding: Option<Dimension>,
 
     // Sizing
     pub width: Option<Dimension>,
@@ -148,27 +148,81 @@ pub struct Style {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-/// A length, either pixels (numeric) or a percentage string like `"50%"`.
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(untagged)]
+/// A length. A bare number is pixels; a string carries a unit:
+///   * `"50%"`    — percentage of the parent
+///   * `"3mcw"`   — monospace cell *widths* (x-axis, `n · px_per_col`)
+///   * `"2mch"`   — monospace cell *heights* (y-axis, `n · px_per_row`)
+///   * `"1mcmin"` — `n · min(px_per_col, px_per_row)` (square that *fits* a cell)
+///   * `"1mcmax"` — `n · max(px_per_col, px_per_row)` (square that *covers* a cell)
+///
+/// The cell units are the protocol's native, terminal-portable lengths: they
+/// resolve against the real per-terminal cell size (queried at runtime), so a
+/// widget lines up with the character grid regardless of font, size, or DPI.
+/// Pixels are the escape hatch for sub-cell cosmetics.
+#[derive(Debug, Clone, Copy)]
 pub enum Dimension {
     Px(f32),
-    #[serde(deserialize_with = "deserialize_percent")]
     Percent(f32),
+    /// Cell widths (× px_per_col).
+    ColWidth(f32),
+    /// Cell heights (× px_per_row).
+    RowHeight(f32),
+    /// × min(px_per_col, px_per_row) — largest square fitting in a cell.
+    CellMin(f32),
+    /// × max(px_per_col, px_per_row) — smallest square covering a cell.
+    CellMax(f32),
 }
 
-fn deserialize_percent<'de, D>(d: D) -> Result<f32, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(d)?;
-    let trimmed = s.trim();
-    let pct = trimmed
-        .strip_suffix('%')
-        .ok_or_else(|| serde::de::Error::custom("expected `Npx` number or `N%` string"))?;
-    pct.trim()
-        .parse::<f32>()
-        .map_err(|e| serde::de::Error::custom(format!("invalid percent value: {e}")))
+impl<'de> Deserialize<'de> for Dimension {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct DimVisitor;
+        impl serde::de::Visitor<'_> for DimVisitor {
+            type Value = Dimension;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a number (px) or a string like \"50%\", \"3mcw\", \"1mcmin\"")
+            }
+            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Dimension, E> {
+                Ok(Dimension::Px(v as f32))
+            }
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Dimension, E> {
+                Ok(Dimension::Px(v as f32))
+            }
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Dimension, E> {
+                Ok(Dimension::Px(v as f32))
+            }
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Dimension, E> {
+                parse_dimension(s).ok_or_else(|| {
+                    E::custom(format!("invalid length: `{s}` (expected px number, %, or m-cell unit)"))
+                })
+            }
+        }
+        d.deserialize_any(DimVisitor)
+    }
+}
+
+/// Parse a string length. Longest unit suffixes are checked first so `mcmin`
+/// isn't shadowed by `mc…`. Returns `None` on anything unrecognized.
+fn parse_dimension(s: &str) -> Option<Dimension> {
+    let s = s.trim();
+    if let Some(p) = s.strip_suffix('%') {
+        return p.trim().parse().ok().map(Dimension::Percent);
+    }
+    for (suffix, ctor) in [
+        ("mcmin", Dimension::CellMin as fn(f32) -> Dimension),
+        ("mcmax", Dimension::CellMax as fn(f32) -> Dimension),
+        ("mcw", Dimension::ColWidth as fn(f32) -> Dimension),
+        ("mch", Dimension::RowHeight as fn(f32) -> Dimension),
+        ("px", Dimension::Px as fn(f32) -> Dimension),
+    ] {
+        if let Some(n) = s.strip_suffix(suffix) {
+            return n.trim().parse().ok().map(ctor);
+        }
+    }
+    // Bare numeric string → px.
+    s.parse().ok().map(Dimension::Px)
 }
 
 /// font-weight: `"normal"`, `"bold"`, or a number 100–900. The name is

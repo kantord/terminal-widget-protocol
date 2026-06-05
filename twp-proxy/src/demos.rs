@@ -519,8 +519,8 @@ fn docker_dashboard_scene() -> Value {
     // ── Stat cards: two gauges + a gradient network area chart ──
     let gauge_card = |value: f64, fill: &str, label: &str| {
         let pct = format!("{}%", (value * 100.0).round() as i64);
-        json!({"n":"flex","s":{"flex-direction":"column","align-items":"center","justify-content":"center","gap":"0.15mch","width":"11.5mcw","height":"3.6mch","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.6mcw"},"c":[
-            json!({"n":"svg","t":gauge_svg(value, fill),"s":{"width":"9.2mcw","height":"2.35mch"}}),
+        json!({"n":"flex","s":{"flex-direction":"column","align-items":"center","justify-content":"center","gap":"0.1mch","width":"11.5mcw","height":"4.8mch","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.6mcw"},"c":[
+            json!({"n":"svg","t":gauge_svg(value, fill),"s":{"width":"9.2mcw","height":"2.2mch"}}),
             json!({"n":"mono","t":pct,"s":{"color":fill,"font-weight":"bold"}}),
             json!({"n":"text","t":label,"s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}})
         ]})
@@ -550,12 +550,12 @@ fn docker_dashboard_scene() -> Value {
          <path d='{area}' fill='url(#ng)'/>\
          <path d='{line}' fill='none' stroke='term(4)' stroke-width='2' stroke-linejoin='round'/></svg>"
     );
-    let net_card = json!({"n":"flex","s":{"flex-direction":"column","flex-grow":1,"gap":"0.15mch","height":"3.6mch","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.75mcw"},"c":[
+    let net_card = json!({"n":"flex","s":{"flex-direction":"column","flex-grow":1,"gap":"0.2mch","height":"4.8mch","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.75mcw"},"c":[
         json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.6mcw"},"c":[
             json!({"n":"text","t":"Network I/O","s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}}),
             json!({"n":"mono","t":"↑ 4.2MB/s","s":{"color":blue}})
         ]}),
-        json!({"n":"svg","t":net_svg,"s":{"width":"100%","height":"2.5mch"}})
+        json!({"n":"svg","t":net_svg,"s":{"width":"100%","height":"2.4mch"}})
     ]});
     let cards = json!({"n":"flex","s":{"flex-direction":"row","gap":"0.9mcw","width":"100%"},"c":[
         gauge_card(0.34, blue, "CPU"), gauge_card(0.61, cyan, "Memory"), net_card

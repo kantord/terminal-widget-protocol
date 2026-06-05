@@ -686,7 +686,7 @@ fn diff_review_scene() -> Value {
                 "del" => (del_bg, del),
                 _ => (editor, muted),
             };
-            json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":10,"width":"100%","background":bg,"padding":2},"c":[
+            json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.77mcw","width":"100%","background":bg,"padding":"0.15mcw"},"c":[
                 json!({"n":"mono","t":gutter,"s":{"color":muted}}),
                 json!({"n":"flex","s":{"flex-direction":"row"},"c":[
                     json!({"n":"mono","t":sign,"s":{"color":sign_color,"font-weight":"bold"}}),
@@ -696,34 +696,34 @@ fn diff_review_scene() -> Value {
         })
         .collect();
 
-    let file_header = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","padding":6,"background":surface,"border-radius":6},"c":[
+    let file_header = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","padding":"0.45mcw","background":surface,"border-radius":"0.45mcmin"},"c":[
         json!({"n":"mono","t":"src/render.rs","s":{"color":body}})
     ]});
     // Border colour is derived (color-mix), so it goes through the CSS
     // passthrough longhands rather than the typed `border` (which only takes a
     // plain colour).
-    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":1,"padding":4,"background":editor,"border-radius":6,"border-width":"1px","border-style":"solid","border-color":border},"c":diff_rows});
+    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.05mch","padding":"0.3mcw","background":editor,"border-radius":"0.45mcmin","border-width":"1px","border-style":"solid","border-color":border},"c":diff_rows});
 
     // Inline review comment: avatar (with online dot) + shadowed bubble. The
     // dot's ring is the editor background so it reads as cut into the surface.
     let avatar = avatar_with_status(STANDARD.encode(AVATAR), 36, add, editor);
-    let author = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":6},"c":[
+    let author = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.45mcw"},"c":[
         json!({"n":"text","t":"Grace Hopper","s":{"color":fg,"font-size":13,"font-family":sans_b,"letter-spacing":"0px"}}),
         json!({"n":"text","t":"reviewed 2h ago","s":{"color":muted,"font-size":11,"font-family":sans,"letter-spacing":"0px"}})
     ]});
     let comment_text = json!({"n":"text","t":"Good — a named constant beats a magic number. Ship it.","s":{"color":body,"font-size":13,"font-family":sans,"letter-spacing":"0px"}});
-    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":5,"padding":10,"background":surface2,"border-radius":10,"border-width":"1px","border-style":"solid","border-color":border,"box-shadow":"0 8px 22px #00000055","max-width":"62%"},"c":[author, comment_text]});
-    let comment = json!({"n":"flex","s":{"flex-direction":"row","align-items":"start","gap":10},"c":[avatar, bubble]});
+    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.35mch","padding":"0.75mcw","background":surface2,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"box-shadow":"0 8px 22px #00000055","max-width":"62%"},"c":[author, comment_text]});
+    let comment = json!({"n":"flex","s":{"flex-direction":"row","align-items":"start","gap":"0.77mcw"},"c":[avatar, bubble]});
 
     // The comment floats *over* the diff (a review popover), positioned by a
     // flex overlay inside a stack — anchored near the changed line, its shadow
     // lifting it off the code.
-    let floating = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","height":"100%","justify-content":"flex-start","align-items":"flex-start","padding-top":"62px","padding-left":"90px"},"c":[comment]});
-    let stack = json!({"n":"stack","s":{"width":"100%","height":190},"c":[diff_box, floating]});
+    let floating = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","height":"100%","justify-content":"flex-start","align-items":"flex-start","padding-top":"2.14mch","padding-left":"6.9mcw"},"c":[comment]});
+    let stack = json!({"n":"stack","s":{"width":"100%","height":"6.55mch"},"c":[diff_box, floating]});
 
     json!({"S":{
         "n":"flex",
-        "s":{"flex-direction":"column","gap":12,"padding":18,"width":"100%","height":"100%","background":editor},
+        "s":{"flex-direction":"column","gap":"0.45mch","padding":"1.4mcw","width":"100%","height":"100%","background":editor},
         "c":[file_header, stack]
     }})
 }

@@ -460,13 +460,14 @@ mod tests {
         // No set_cell_pixels → default 20×40, deliberately NOT the 13×29 it was
         // authored at. With cell units it should still be perfectly aligned.
         let demos = crate::demos::themed_demos();
-        let td = demos
-            .iter()
-            .find(|d| d.name.starts_with("docker_dashboard"))
-            .unwrap();
-        let json = serde_json::to_string(&td.scene).unwrap();
-        let img = render_payload(&json, td.cols, td.rows);
-        img.save("/tmp/docker_preview.png").unwrap();
+        for (prefix, out) in [
+            ("docker_dashboard", "/tmp/docker_preview.png"),
+            ("diff_review", "/tmp/diff_preview.png"),
+        ] {
+            let td = demos.iter().find(|d| d.name.starts_with(prefix)).unwrap();
+            let json = serde_json::to_string(&td.scene).unwrap();
+            render_payload(&json, td.cols, td.rows).save(out).unwrap();
+        }
     }
 
     #[test]

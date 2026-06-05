@@ -389,25 +389,252 @@ pub struct ThemedDemo {
     pub theme: Theme,
 }
 
-/// The code-review diff, rendered once per theme. The point: a real, sensible
-/// UI whose every colour is *derived from the terminal palette* — proving the
-/// theming story holds up beyond solid swatches.
+/// Real, sensible UIs whose every colour is *derived from the terminal palette*
+/// — each rendered once per theme to prove the theming holds up on a full app,
+/// not just solid swatches. The Docker dashboard is the flagship: gauges,
+/// sparklines, a gradient area chart, status badges and a container table, all
+/// re-toned by the session palette.
 pub fn themed_demos() -> Vec<ThemedDemo> {
-    themes()
-        .into_iter()
-        .map(|theme| {
+    // (base name, cols, rows, scene builder)
+    let builders: Vec<(&str, u32, u32, fn() -> Value)> = vec![
+        ("docker_dashboard", 92, 24, docker_dashboard_scene),
+        ("diff_review", 74, 16, diff_review_scene),
+    ];
+    let mut out = Vec::new();
+    for (name, cols, rows, build) in builders {
+        for theme in themes() {
             let slug = theme.name.to_lowercase().replace(' ', "_");
-            ThemedDemo {
-                name: format!("diff_review_{slug}"),
+            out.push(ThemedDemo {
+                name: format!("{name}_{slug}"),
                 label: theme.name.to_string(),
                 category: "term-themed",
-                cols: 74,
-                rows: 16,
-                scene: diff_review_scene(),
+                cols,
+                rows,
+                scene: build(),
                 theme,
-            }
+            });
+        }
+    }
+    out
+}
+
+// ── Docker dashboard ──────────────────────────────────────────────
+
+/// A semicircular gauge as SVG, `value` in 0..1. `fill` is any colour the SVG
+/// parser accepts after term() substitution (so `term(2)` etc. work); the track
+/// uses `term(8)` (the palette's "bright black"), keeping it theme-derived.
+fn gauge_svg(value: f64, fill: &str) -> String {
+    let (cx, cy, r) = (70.0_f64, 70.0_f64, 52.0_f64);
+    let start = std::f64::consts::PI;
+    let end = start - value.clamp(0.0, 1.0) * std::f64::consts::PI;
+    let polar = |a: f64| (cx + r * a.cos(), cy - r * a.sin());
+    let (tx0, ty0) = polar(start);
+    let (tx1, ty1) = polar(0.0);
+    let (vx1, vy1) = polar(end);
+    format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 140 80'>\
+         <path d='M {tx0:.1} {ty0:.1} A {r} {r} 0 0 1 {tx1:.1} {ty1:.1}' fill='none' stroke='term(8)' stroke-width='11' stroke-linecap='round'/>\
+         <path d='M {tx0:.1} {ty0:.1} A {r} {r} 0 0 1 {vx1:.1} {vy1:.1}' fill='none' stroke='{fill}' stroke-width='11' stroke-linecap='round'/>\
+         </svg>"
+    )
+}
+
+/// A sparkline polyline as SVG over `data`, scaled to fit `w`×`h`.
+fn sparkline_svg(data: &[f64], stroke: &str, w: f64, h: f64) -> String {
+    let n = data.len().max(2);
+    let max = data.iter().cloned().fold(0.0_f64, f64::max).max(1e-6);
+    let dx = w / (n as f64 - 1.0);
+    let pts: String = data
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = i as f64 * dx;
+            let y = h - (v / max) * (h - 3.0) - 1.5;
+            format!("{}{x:.1},{y:.1}", if i == 0 { "" } else { " " })
+        })
+        .collect();
+    format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {w:.0} {h:.0}'>\
+         <polyline points='{pts}' fill='none' stroke='{stroke}' stroke-width='1.5' stroke-linejoin='round' stroke-linecap='round'/></svg>"
+    )
+}
+
+/// Deterministic pseudo-history (no RNG): a smooth-ish wave seeded per row.
+fn fake_series(seed: u32, base: f64, amp: f64, n: usize) -> Vec<f64> {
+    (0..n)
+        .map(|i| {
+            let t = i as f64 * 0.6 + seed as f64 * 1.7;
+            (base + amp * (t.sin() * 0.6 + (t * 0.5).cos() * 0.4)).clamp(0.02, 1.0)
         })
         .collect()
+}
+
+/// **Flagship demo.** A Docker monitoring dashboard — the kind of thing people
+/// open Docker Desktop / Portainer or fall back to plain `docker stats` for.
+/// Combines flex-grow layout, SVG gauges + sparklines + a gradient area chart,
+/// status badges and a container table. Every colour derives from the terminal
+/// palette (`term()` solids, `color-mix()` surfaces), so it re-tones per theme.
+fn docker_dashboard_scene() -> Value {
+    let editor = "term(bg)";
+    let surface = "color-mix(in srgb, term(fg) 6%, term(bg))";
+    let border = "color-mix(in srgb, term(fg) 16%, term(bg))";
+    let row_line = "color-mix(in srgb, term(fg) 9%, term(bg))";
+    let muted = "color-mix(in srgb, term(fg) 50%, term(bg))";
+    let dim = "color-mix(in srgb, term(fg) 38%, term(bg))";
+    let fg = "term(fg)";
+    let green = "term(2)";
+    let yellow = "term(3)";
+    let red = "term(1)";
+    let blue = "term(4)";
+    let cyan = "term(6)";
+
+    let sans = "twp-sans";
+
+    // ── Header: logo + title, flex-grow spacer, cluster summary ──
+    let logo = json!({"n":"box","s":{"width":20,"height":20,"border-radius":6,"background":blue}});
+    let title = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":8},"c":[
+        logo,
+        json!({"n":"mono","t":"docker","s":{"color":fg,"font-weight":"bold"}}),
+        json!({"n":"mono","t":"prod-cluster","s":{"color":muted}})
+    ]});
+    let stat = |label: &str, value: &str, color: &str| {
+        json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":5},"c":[
+            json!({"n":"box","s":{"width":8,"height":8,"border-radius":4,"background":color}}),
+            json!({"n":"mono","t":value,"s":{"color":fg}}),
+            json!({"n":"mono","t":label,"s":{"color":muted}})
+        ]})
+    };
+    let spacer = json!({"n":"box","s":{"flex-grow":1}});
+    let summary = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":18},"c":[
+        stat("running", "6", green),
+        stat("restarting", "1", yellow),
+        stat("exited", "1", red)
+    ]});
+    let header = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","width":"100%","gap":12},"c":[title, spacer, summary]});
+
+    // ── Stat cards: two gauges + a gradient network area chart ──
+    let gauge_card = |value: f64, fill: &str, label: &str| {
+        let pct = format!("{}%", (value * 100.0).round() as i64);
+        json!({"n":"flex","s":{"flex-direction":"column","align-items":"center","justify-content":"center","gap":2,"width":150,"height":104,"background":surface,"border-radius":10,"border-width":"1px","border-style":"solid","border-color":border,"padding":8},"c":[
+            json!({"n":"svg","t":gauge_svg(value, fill),"s":{"width":120,"height":68}}),
+            json!({"n":"mono","t":pct,"s":{"color":fill,"font-weight":"bold"}}),
+            json!({"n":"text","t":label,"s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}})
+        ]})
+    };
+    let net = fake_series(2, 0.45, 0.4, 28);
+    let nmax = net.iter().cloned().fold(0.0_f64, f64::max).max(1e-6);
+    let (nw, nh) = (320.0_f64, 70.0_f64);
+    let ndx = nw / (net.len() as f64 - 1.0);
+    let mut line = String::new();
+    let mut area = format!("M 0 {nh:.0}");
+    for (i, &v) in net.iter().enumerate() {
+        let x = i as f64 * ndx;
+        let y = nh - (v / nmax) * (nh - 6.0) - 3.0;
+        if i == 0 {
+            line.push_str(&format!("M {x:.1} {y:.1}"));
+        } else {
+            line.push_str(&format!(" L {x:.1} {y:.1}"));
+        }
+        area.push_str(&format!(" L {x:.1} {y:.1}"));
+    }
+    area.push_str(&format!(" L {nw:.0} {nh:.0} Z"));
+    let net_svg = format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {nw:.0} {nh:.0}' preserveAspectRatio='none'>\
+         <defs><linearGradient id='ng' x1='0' y1='0' x2='0' y2='1'>\
+         <stop offset='0' stop-color='term(4)' stop-opacity='0.5'/>\
+         <stop offset='1' stop-color='term(4)' stop-opacity='0'/></linearGradient></defs>\
+         <path d='{area}' fill='url(#ng)'/>\
+         <path d='{line}' fill='none' stroke='term(4)' stroke-width='2' stroke-linejoin='round'/></svg>"
+    );
+    let net_card = json!({"n":"flex","s":{"flex-direction":"column","flex-grow":1,"gap":4,"height":104,"background":surface,"border-radius":10,"border-width":"1px","border-style":"solid","border-color":border,"padding":10},"c":[
+        json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":8},"c":[
+            json!({"n":"text","t":"Network I/O","s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}}),
+            json!({"n":"mono","t":"↑ 4.2MB/s","s":{"color":blue}})
+        ]}),
+        json!({"n":"svg","t":net_svg,"s":{"width":"100%","height":72}})
+    ]});
+    let cards = json!({"n":"flex","s":{"flex-direction":"row","gap":12,"width":"100%"},"c":[
+        gauge_card(0.34, blue, "CPU"), gauge_card(0.61, cyan, "Memory"), net_card
+    ]});
+
+    // ── Container table ──
+    // (name, image, status, cpu, mem, uptime, spark-seed)
+    let rows: Vec<(&str, &str, &str, f64, f64, &str, u32)> = vec![
+        ("api-gateway", "nginx:1.27", "running", 0.12, 0.34, "4d 2h", 1),
+        ("postgres", "postgres:16", "running", 0.41, 0.62, "12d 6h", 3),
+        ("redis", "redis:7.2", "running", 0.06, 0.18, "12d 6h", 5),
+        ("worker-1", "app:2.3.1", "running", 0.78, 0.55, "3h 11m", 7),
+        ("scheduler", "app:2.3.1", "running", 0.22, 0.30, "5d 9h", 9),
+        ("worker-2", "app:2.3.1", "restarting", 0.0, 0.0, "—", 11),
+        ("legacy-batch", "app:1.9.4", "exited", 0.0, 0.0, "—", 13),
+    ];
+    let status_color = |s: &str| match s {
+        "running" => green,
+        "restarting" => yellow,
+        _ => red,
+    };
+    // Text columns are padded mono strings (one glyph per cell → they align on
+    // the grid for free, regardless of font size); graphical columns are
+    // fixed-pixel flex cells. Same widths in header + body keep them lined up.
+    let (cpu_w, trend_w, status_w) = (140.0_f64, 80.0_f64, 150.0_f64);
+    let gcell = |w: f64, child: Value| json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","width":w},"c":[child]});
+    let hlabel = |t: &str| json!({"n":"mono","t":t,"s":{"color":dim}});
+
+    let header_row = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":12,"width":"100%","padding":6},"c":[
+        json!({"n":"flex","s":{"width":12}}),
+        hlabel(&format!("{:<14}", "CONTAINER")),
+        hlabel(&format!("{:<13}", "IMAGE")),
+        gcell(cpu_w, hlabel("CPU")),
+        gcell(trend_w, hlabel("MEM")),
+        gcell(status_w, hlabel("STATUS")),
+        hlabel("UPTIME")
+    ]});
+
+    let body_rows: Vec<Value> = rows
+        .iter()
+        .map(|(name, image, status, cpu, mem, uptime, seed)| {
+            let sc = status_color(status);
+            let dot = json!({"n":"box","s":{"width":10,"height":10,"border-radius":5,"background":sc}});
+            let bar_fill = if *cpu < 0.5 { green } else if *cpu < 0.8 { yellow } else { red };
+            let cpu_cell = gcell(cpu_w, json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":8},"c":[
+                json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","width":70,"height":7,"background":row_line,"border-radius":4},"c":[
+                    json!({"n":"box","s":{"width":format!("{}%", (cpu*100.0).round() as i64),"height":7,"background":bar_fill,"border-radius":4}})
+                ]}),
+                json!({"n":"mono","t":format!("{:>3}%", (cpu*100.0).round() as i64),"s":{"color":muted}})
+            ]}));
+            let running = *status == "running";
+            let series = if running {
+                fake_series(*seed, *mem, 0.25, 16)
+            } else {
+                vec![0.04_f64; 16] // stopped → flat line
+            };
+            let spark = sparkline_svg(&series, if running { cyan } else { dim }, 70.0, 18.0);
+            // Badge sizes to its (padded) content so the pill always wraps the
+            // word; the surrounding status cell is fixed-width for alignment.
+            let badge = json!({"n":"flex","s":{"justify-content":"center","align-items":"center","background":format!("color-mix(in srgb, {sc} 18%, term(bg))"),"border-radius":6,"padding-top":3,"padding-bottom":3,"padding-left":7,"padding-right":7},"c":[
+                json!({"n":"mono","t":*status,"s":{"color":sc}})
+            ]});
+            json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":12,"width":"100%","padding":6,"border-top-width":"1px","border-top-style":"solid","border-top-color":row_line},"c":[
+                json!({"n":"flex","s":{"width":12,"justify-content":"center"},"c":[dot]}),
+                json!({"n":"mono","t":format!("{:<14}", name),"s":{"color":fg}}),
+                json!({"n":"mono","t":format!("{:<13}", image),"s":{"color":muted}}),
+                cpu_cell,
+                gcell(trend_w, json!({"n":"svg","t":spark,"s":{"width":74,"height":20}})),
+                gcell(status_w, badge),
+                json!({"n":"mono","t":format!("{:<8}", uptime),"s":{"color":dim}})
+            ]})
+        })
+        .collect();
+
+    let mut table_children = vec![header_row];
+    table_children.extend(body_rows);
+    let table = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","background":surface,"border-radius":10,"border-width":"1px","border-style":"solid","border-color":border,"padding":4},"c":table_children});
+
+    json!({"S":{
+        "n":"flex",
+        "s":{"flex-direction":"column","gap":12,"padding":16,"width":"100%","height":"100%","background":editor},
+        "c":[header, cards, table]
+    }})
 }
 
 /// A code-review diff (added / removed / context lines + an inline review

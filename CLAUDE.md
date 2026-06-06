@@ -5,6 +5,30 @@ Terminal Widget Protocol (TWP), plus `twp-proxy`, a reference **polyfill**. When
 writing or editing `RFC.md` (and other prose docs), follow these conventions.
 They encode decisions already made — don't relitigate them in passing.
 
+## Respect for prior work (applies everywhere)
+
+This document **builds upon and naturally extends** existing terminal graphics
+work — it does not criticize it. Sixel, the Kitty graphics protocol, iTerm2
+inline images, OSC 8, the Kitty text-sizing protocol, and TUI frameworks are
+**foundations TWP stands on**, and the framing must reflect that:
+
+- Treat existing protocols as **solving their problem well** (pixel transport,
+  hyperlinks, text sizing). TWP adds a **complementary layer** (declarative,
+  integrated rendering), it does not "fix" or "replace" them.
+- When describing the gap TWP fills, frame it as **a different layer / a new use
+  case**, never as a deficiency in prior work. They operate at the pixel layer
+  *by design*; that is not a flaw.
+- Avoid dismissive language: no "opaque blob," "bolted on," "looks foreign,"
+  "yet another image escape," etc. Prefer neutral, accurate phrasing ("operates
+  at the pixel layer," "renders the final image externally," "a complementary
+  declarative layer").
+- Credit generously and specifically. `img` keys mirror KGP *for portability*;
+  `mono` sizing follows the Kitty text-sizing protocol; OSC 8 is cited as a model
+  for community-published adoption. Keep doing this.
+
+The tone is "here is a natural next layer that lets these pieces compose," not
+"here is what everyone else got wrong."
+
 ## Framing — the load-bearing decisions
 
 - **Lead with TWP, the concrete protocol.** Do **not** headline the "universal

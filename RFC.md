@@ -41,6 +41,51 @@ terminal's own rendering pipeline (§3.3).
 
 ---
 
+## Status of This Document
+
+This is a **proposal**, open for comments — a "request for comments" in the
+literal sense, *not* an IETF RFC. A few things follow from that, and they are
+stated plainly here so there is no confusion about the document's standing:
+
+1. **It is a living document.** It will change in response to feedback and
+   implementation experience. Section numbers, key names, and exact spellings
+   are not yet stable (§ markers are cross-references within *this* revision).
+
+2. **There is no formal approval body or process.** No standards organization or
+   working group governs terminal-extension protocols, and this document does not
+   seek ratification from one. The nearest formal standard, ECMA-48 (the APC
+   framing TWP rides on), is long settled and not being extended; there is no
+   committee that "accepts" a new sequence. No version of this document becomes
+   official by decree.
+
+3. **If TWP becomes a standard, it will be a *de facto* one** — established the
+   way the Kitty graphics protocol and OSC 8 hyperlinks were: a clear, public
+   specification plus a working reference implementation, adopted because it is
+   useful enough that terminal emulators (and the libraries and applications that
+   target them) choose to implement it. **Its reality depends entirely on
+   terminal emulators implementing it** — nothing in this document is binding
+   until they do.
+
+The intended path, in clean steps:
+
+1. **Publish** the specification and the reference polyfill openly (this repo).
+2. **Solicit comments** and iterate this living document.
+3. **Demonstrate value**: the polyfill (§3.2) lets applications and frameworks
+   use TWP on today's terminals, so the protocol can be evaluated before any
+   terminal adopts it.
+4. **Native adoption**: terminal emulators implement TWP in their own rendering
+   pipelines (§3.3) — the milestone that makes it real.
+5. **Convergence**: as implementations agree, the document stabilizes into a de
+   facto standard. Compatibility is tracked by the protocol version (`v`);
+   backward-incompatible changes bump it, additive changes rely on the
+   "unknown ⇒ ignore" rule (§10). Stability comes from agreement among
+   implementations, not from a stamp.
+
+Comments, issues, and competing proposals are welcome in the project's public
+repository.
+
+---
+
 ## Conventions and Terminology
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD",
@@ -58,6 +103,13 @@ and only when, they appear in all capitals, as shown here.
 - **KGP** — the Kitty graphics protocol. TWP does not depend on it; it is merely
   the display backend the bundled polyfill (§3.2) happens to use. A native
   renderer (§3.3) paints scenes directly and need not involve KGP at all.
+
+**A note on the examples in this document.** For readability, JSON throughout
+this document is shown **pretty-printed** (indented, multi-line) and often as a
+bare fragment. This is *not* the wire form. On the wire the payload MUST be a
+**single-line, compact JSON document wrapped in the full envelope** —
+`ESC _ twp;v=1,c=…,r=… ; {…} ESC \` (§4). The formatted examples are
+illustrative only; a real sender always emits the framed, single-line form.
 
 ---
 
@@ -172,11 +224,17 @@ vocabulary — which is what this document specifies.
 
 **Non-Goals (Phase 1)**
 
-- Not a general GUI toolkit (no event model, no focus, no animation timeline in
-  the wire format — though CSS effects and SVG animation are not precluded).
+- Not a general GUI toolkit (no event model, no focus).
+- **No renderer-owned animation** in this first iteration: there is no keyframe
+  or timeline model that the renderer drives. An application updates or animates
+  a widget by **re-sending a TWP message to the same screen region** — the
+  renderer replaces the prior rendering there. Motion is therefore *application-
+  driven*, frame by frame. (Each scene is static; CSS/SVG animation is neither
+  required nor precluded, but is not specified here. Renderer-owned animation is
+  noted as possible future work, §13.)
 - Not a replacement for the Kitty graphics protocol; it operates at a different
   layer (the polyfill happens to *use* KGP to display).
-- No interactivity/hit-testing in Phase 1 (see §11, Future Work).
+- No interactivity/hit-testing in Phase 1 (see §13, Future Work).
 
 ---
 

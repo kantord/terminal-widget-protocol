@@ -1,0 +1,13 @@
+{
+  // dprint owns formatting; markdownlint enforces only *semantic* rules,
+  // so the rules that overlap with formatting are disabled to avoid conflicts.
+  "config": {
+    "default": true,
+    "MD013": false, // line length — dprint handles wrapping
+    "MD033": false, // inline HTML — we use <!-- notes --> and angle-bracket tokens
+    "MD041": false, // first line need not be a top-level heading
+    "MD034": false, // bare URLs are fine in references / credits (auto-linked)
+    "MD024": { "siblings_only": true }, // repeated subheadings under different parents are fine
+  },
+  "ignores": ["**/node_modules/**", "**/target/**"],
+}

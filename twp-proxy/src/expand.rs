@@ -125,14 +125,12 @@ mod tests {
 
     #[test]
     fn simple_component_expansion() {
-        let n = run(
-            r#"{
+        let n = run(r#"{
                 "S": {"n":"$badge","props":{"label":"PASS"}},
                 "C": {
                     "badge": {"n":"box","c":[{"n":"$param","name":"label"}]}
                 }
-            }"#,
-        );
+            }"#);
         assert_eq!(n.n, "box");
         assert_eq!(n.c.len(), 1);
         assert_eq!(n.c[0].n, "text");
@@ -141,14 +139,12 @@ mod tests {
 
     #[test]
     fn unfilled_param_becomes_placeholder() {
-        let n = run(
-            r#"{
+        let n = run(r#"{
                 "S": {"n":"$badge","props":{}},
                 "C": {
                     "badge": {"n":"box","c":[{"n":"$param","name":"label"}]}
                 }
-            }"#,
-        );
+            }"#);
         assert_eq!(n.n, "box");
         assert_eq!(n.c[0].n, "box"); // placeholder
     }
@@ -159,15 +155,13 @@ mod tests {
         // Inside "inner", a $param looking for "x" must find the value
         // explicitly passed in — *not* leak something from the outer scope
         // if the names happened to differ.
-        let n = run(
-            r#"{
+        let n = run(r#"{
                 "S": {"n":"$outer","props":{"label":"hello"}},
                 "C": {
                     "outer": {"n":"$inner","props":{"text":{"n":"$param","name":"label"}}},
                     "inner": {"n":"box","c":[{"n":"$param","name":"text"}]}
                 }
-            }"#,
-        );
+            }"#);
         // outer's "label" → resolved in scene scope (empty) → wait, "label"
         // is in outer's invocation scope. So when we walk outer's body,
         // {$param name=label} resolves to "hello". outer's body invokes
@@ -181,14 +175,12 @@ mod tests {
     fn recursive_component_caps_at_max_depth() {
         // A component that invokes itself forever. Must not blow the stack
         // or hang; should bottom out at the depth cap with a placeholder.
-        let n = run(
-            r#"{
+        let n = run(r#"{
                 "S": {"n":"$loop","props":{}},
                 "C": {
                     "loop": {"n":"$loop","props":{}}
                 }
-            }"#,
-        );
+            }"#);
         // After MAX_DEPTH invocations we return a placeholder box.
         assert_eq!(n.n, "box");
     }

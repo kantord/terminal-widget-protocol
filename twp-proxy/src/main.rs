@@ -49,7 +49,11 @@ fn handle_twp(cache: &mut cache::Cache, payload: &[u8], out: &mut Vec<u8>) {
             parsed.rows,
         ));
     }
-    out.extend_from_slice(&kitty::placeholder_cells(image_id, parsed.cols, parsed.rows));
+    out.extend_from_slice(&kitty::placeholder_cells(
+        image_id,
+        parsed.cols,
+        parsed.rows,
+    ));
 }
 
 struct ParsedTwp<'a> {
@@ -234,7 +238,9 @@ fn parse_osc_palette(data: &[u8]) -> (render::Palette, Vec<u8>) {
 }
 
 fn parse_osc_body(body: &[u8], base: &mut [[u8; 3]; 16], fg: &mut [u8; 3], bg: &mut [u8; 3]) {
-    let Ok(s) = std::str::from_utf8(body) else { return };
+    let Ok(s) = std::str::from_utf8(body) else {
+        return;
+    };
     if let Some(rest) = s.strip_prefix("4;") {
         if let Some((idx, rgb)) = rest.split_once(';') {
             if let (Ok(i), Some(c)) = (idx.parse::<usize>(), parse_osc_rgb(rgb)) {

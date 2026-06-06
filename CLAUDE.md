@@ -17,14 +17,14 @@ inline images, OSC 8, the Kitty text-sizing protocol, and TUI frameworks are
   integrated rendering), it does not "fix" or "replace" them.
 - When describing the gap TWP fills, frame it as **a different layer / a new use
   case**, never as a deficiency in prior work. They operate at the pixel layer
-  *by design*; that is not a flaw.
+  _by design_; that is not a flaw.
 - Avoid dismissive language: no "opaque blob," "bolted on," "looks foreign,"
   "yet another image escape," etc. Prefer neutral, accurate phrasing ("operates
   at the pixel layer," "renders the final image externally," "a complementary
   declarative layer").
-- Credit generously and specifically. `img` keys mirror KGP *for portability*;
-  `mono` sizing follows the Kitty text-sizing protocol; OSC 8 is cited as a model
-  for community-published adoption. Keep doing this.
+- Credit generously and specifically. `img` keys mirror KGP _for portability_;
+  `mono` sizing follows the Kitty text-sizing protocol; OSC 8 is cited as a
+  model for community-published adoption. Keep doing this.
 
 The tone is "here is a natural next layer that lets these pieces compose," not
 "here is what everyone else got wrong."
@@ -32,30 +32,32 @@ The tone is "here is a natural next layer that lets these pieces compose," not
 ## Framing — the load-bearing decisions
 
 - **Lead with TWP, the concrete protocol.** Do **not** headline the "universal
-  envelope" idea. We considered factoring framing/encoding/dispatch into a shared
-  envelope and *deliberately decided against building it* — its value depends on
-  multi-protocol adoption TWP doesn't need. It survives only as a single
-  forward-looking note in Future Work, explicitly "recorded as a possibility, not
-  proposed."
+  envelope" idea. We considered factoring framing/encoding/dispatch into a
+  shared envelope and _deliberately decided against building it_ — its value
+  depends on multi-protocol adoption TWP doesn't need. It survives only as a
+  single forward-looking note in Future Work, explicitly "recorded as a
+  possibility, not proposed."
 
 - **The bundled `twp-proxy` is a polyfill, not a blueprint — and it is
-  NON-NORMATIVE.** It's a deliberately simple, quickly-built renderer that proves
-  the protocol from the *application's* side on today's terminals. Never describe
-  its architecture (an out-of-band rasterizer, a Kitty-graphics display backend,
-  a particular CSS/SVG engine) as how a terminal *should* implement TWP. It
-  demonstrates *behavior*, not implementation.
+  NON-NORMATIVE.** It's a deliberately simple, quickly-built renderer that
+  proves the protocol from the _application's_ side on today's terminals. Never
+  describe its architecture (an out-of-band rasterizer, a Kitty-graphics display
+  backend, a particular CSS/SVG engine) as how a terminal _should_ implement
+  TWP. It demonstrates _behavior_, not implementation.
 
 - **Native integration is the intended implementation** — wire TWP into the
-  terminal's *existing* rendering pipeline so it reuses the terminal's fonts,
-  grid, palette, rasterizer, and screen model. A separate renderer (proxy/library)
-  is **also valid**, not merely a stopgap. Be explicit that the ideal tradeoff
-  (simplicity / performance / correctness) is **genuinely unknown** until TWP is
-  used in practice in specific terminals. Don't fake certainty.
+  terminal's _existing_ rendering pipeline so it reuses the terminal's fonts,
+  grid, palette, rasterizer, and screen model. A separate renderer
+  (proxy/library) is **also valid**, not merely a stopgap. Be explicit that the
+  ideal tradeoff (simplicity / performance / correctness) is **genuinely
+  unknown** until TWP is used in practice in specific terminals. Don't fake
+  certainty.
 
 - **KGP (Kitty graphics protocol) is the polyfill's display backend, NOT part of
-  TWP.** TWP does not depend on it; a native renderer paints directly and need not
-  involve KGP. Never write "TWP uses KGP." The useful contrast is *imperative
-  pixels vs. a declarative description* — but keep it at that level (see next).
+  TWP.** TWP does not depend on it; a native renderer paints directly and need
+  not involve KGP. Never write "TWP uses KGP." The useful contrast is
+  _imperative pixels vs. a declarative description_ — but keep it at that level
+  (see next).
 
 - **Do NOT frame TWP as "HTML/CSS in the terminal," a "document," a "styling
   language," or a "browser."** That oversells the scope (TWP is a small, bounded
@@ -65,27 +67,27 @@ The tone is "here is a natural next layer that lets these pieces compose," not
   ignorable widget primitive** the terminal can implement a subset of. Address
   the "don't bloat the terminal" concern directly: it's a standard APC sequence
   unaware terminals swallow (§4), partial support is fine via "unknown ⇒ ignore"
-  (§10), and it reuses the terminal's existing rendering rather than adding a new
-  subsystem. (Borrowing *concepts* from CSS — flexbox, `color-mix()` — for
-  familiarity is fine; claiming TWP *is* CSS/HTML is not.)
+  (§10), and it reuses the terminal's existing rendering rather than adding a
+  new subsystem. (Borrowing _concepts_ from CSS — flexbox, `color-mix()` — for
+  familiarity is fine; claiming TWP _is_ CSS/HTML is not.)
 
 ## Motivation framing
 
 The motivation is **not** "terminals can't do graphics" or "stuck at the cell
-grid." It is that doing graphics *well* is hard and the terminal already solves
+grid." It is that doing graphics _well_ is hard and the terminal already solves
 the hard parts. Keep these threads:
 
-- Existing graphics (Sixel/KGP/iTerm2) place **opaque pixels bolted on the side** —
-  no reflow, theme, text selection, search, or accessibility.
+- Existing graphics (Sixel/KGP/iTerm2) place **opaque pixels bolted on the
+  side** — no reflow, theme, text selection, search, or accessibility.
 - The terminal owns the things external renderers must re-solve and inevitably
   drift on: **font rendering** (the hardest part), the **layout grid**, the
   **color theme**, and the **screen model** (selection/reflow/a11y).
 - **Web tech is a natural fit**: design tokens + color blending (`color-mix()`,
-  relative colors) make a coherent UI from a *small* palette — exactly the
+  relative colors) make a coherent UI from a _small_ palette — exactly the
   terminal's ~16-color situation.
-- TWP is a **low-level substrate for CLI/TUI frameworks**, motivated by the surge
-  of rich/interactive terminal apps including **AI agents** — so frameworks don't
-  each reinvent renderer + theming + layout.
+- TWP is a **low-level substrate for CLI/TUI frameworks**, motivated by the
+  surge of rich/interactive terminal apps including **AI agents** — so
+  frameworks don't each reinvent renderer + theming + layout.
 - Declarativeness is the **mechanism** (it lets the terminal own the rendering),
   not the goal.
 
@@ -97,32 +99,33 @@ the hard parts. Keep these threads:
 - Preserve the structure: status/version header → Conventions & Terminology →
   numbered sections → Security Considerations → References (normative /
   informative) → worked-example appendix.
-- **Section numbers are stable cross-references.** Don't renumber casually; if you
-  must, update the `§N` references.
+- **Section numbers are stable cross-references.** Don't renumber casually; if
+  you must, update the `§N` references.
 - Label non-binding passages **(informative)**.
 - Honesty over salesmanship. Acknowledge limitations (the polyfill's drift, the
-  text/widget coexistence limit, unknown tradeoffs). For a spec seeking adoption,
-  candor reads as credibility; let the demo screenshots do the selling.
+  text/widget coexistence limit, unknown tradeoffs). For a spec seeking
+  adoption, candor reads as credibility; let the demo screenshots do the
+  selling.
 
 ## Accuracy
 
 - **The spec MUST match the implementation.** `twp-proxy/src/protocol.rs` is the
-  source of truth for the wire format (node types, style keys, `Dimension` units,
-  color functions). Don't document aspirational features as shipped — put them in
-  Future Work.
+  source of truth for the wire format (node types, style keys, `Dimension`
+  units, color functions). Don't document aspirational features as shipped — put
+  them in Future Work.
 - Established vocabulary (use exactly these spellings):
   - Wire: `ESC _ twp;v=1,c=COLS,r=ROWS ; {compact JSON} ESC \`
   - Payload keys: `S` (scene), `C` (component defs)
   - Nodes: `flex`, `box`, `text`, `mono`, `svg`, `img`, `stack` (+ `$param` /
     `$<name>` components)
-  - Cell units: `mcw`, `mch`, `mcmin`, `mcmax` (px and `%` also valid)
+  - Cell units: `mcw`, `much`, `mcmin`, `mcmax` (px and `%` also valid)
   - Colors: `term(fg|bg|0-255)`, `transparent`, `currentColor`, `color-mix(...)`
   - Mono sizing: `scale`, `char-width`, `subscale-n`, `subscale-d`
-- The "unknown ⇒ ignore, never fail" rule is *the* forward-compatibility story;
+- The "unknown ⇒ ignore, never fail" rule is _the_ forward-compatibility story;
   invoke it consistently (unknown node type, style prop, header key, version).
 
 ## Voice
 
-Precise, concise, technical. Concrete examples and tables over abstraction. Short
-sentences for normative statements. Em-dashes and parentheticals are fine. Avoid
-hype.
+Precise, concise, technical. Concrete examples and tables over abstraction.
+Short sentences for normative statements. Em-dashes and parentheticals are fine.
+Avoid hype.

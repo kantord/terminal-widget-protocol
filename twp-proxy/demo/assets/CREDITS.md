@@ -5,11 +5,11 @@ attribution is provided here and in the rendered widgets.
 
 ## Public domain
 
-- **charros.jpg** — *Mexican Charros Roping a Bull* (oil painting).
-  Public domain. Source: Wikimedia Commons.
+- **charros.jpg** — _Mexican Charros Roping a Bull_ (oil painting). Public
+  domain. Source: Wikimedia Commons.
   https://commons.wikimedia.org/wiki/File:Mexican_Charros_Roping_a_Bull.jpeg
-- **ada_lovelace.jpg** — Watercolour portrait of Ada Lovelace.
-  Public domain. Source: Wikimedia Commons.
+- **ada_lovelace.jpg** — Watercolour portrait of Ada Lovelace. Public domain.
+  Source: Wikimedia Commons.
   https://commons.wikimedia.org/wiki/File:Ada_Lovelace_portrait.jpg
 - **grace_hopper.jpg** — Commodore Grace M. Hopper, USN. Work of the U.S.
   federal government — public domain. Source: Wikimedia Commons.

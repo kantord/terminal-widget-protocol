@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: twp-proxy
+
+      # Run the same pre-commit hooks CI-side so PRs are gated regardless of
+      # whether contributors installed the local git hook.
+      - name: Install prek
+        run: cargo install --locked prek
+
+      - name: pre-commit hooks (format, typos, markdownlint, hygiene)
+        run: prek run --all-files --show-diff-on-failure
+
+      # Heavier Rust checks live here, not in the per-commit hook.
+      - name: clippy
+        run: cargo clippy --manifest-path twp-proxy/Cargo.toml --all-targets -- -D warnings
+
+      # Fast in-process tests only. The visual harness (twp-screenshot) needs
+      # Xvfb + kitty and is intentionally not run in CI.
+      - name: tests
+        run: cargo test --manifest-path twp-proxy/Cargo.toml --lib
+
+      - name: build
+        run: cargo build --manifest-path twp-proxy/Cargo.toml --release

@@ -38,8 +38,11 @@ impl XvfbSession {
         let child = Command::new("Xvfb")
             .args([
                 display,
-                "-screen", "0", "1920x1080x24",
-                "+extension", "GLX",
+                "-screen",
+                "0",
+                "1920x1080x24",
+                "+extension",
+                "GLX",
                 "+render",
             ])
             .stdout(Stdio::null())
@@ -349,7 +352,6 @@ const SHOWCASE: &[Showcase] = &[
         twp_cmd: "printf '\\x1b_twp;v=1,c=10,r=2;{\"S\":{\"n\":\"mono\",\"t\":\"LINK\",\"s\":{\"scale\":2,\"color\":\"#ecefc1\",\"background\":\"#0a1e24\",\"text-decoration-line\":\"underline\",\"text-decoration-color\":\"#ff5fa2\"}}}\\x1b\\\\'",
         category: "css-effects",
     },
-
     // ── Mini UIs: styled flex containers + mono text + effects ─────
     // Status pill — rounded green badge with bold white label.
     Showcase {
@@ -426,16 +428,23 @@ fn capture_window(display: &str, wid: &str, output: &Path) -> bool {
         .unwrap_or(false)
 }
 
-
 fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
     let sig_file = {
         let mut p = env::temp_dir();
-        p.push(format!("twp-ss-sig-{}-{}", std::process::id(), cfg.output.file_name().unwrap_or_default().to_string_lossy()));
+        p.push(format!(
+            "twp-ss-sig-{}-{}",
+            std::process::id(),
+            cfg.output.file_name().unwrap_or_default().to_string_lossy()
+        ));
         p
     };
     let script_file = {
         let mut p = env::temp_dir();
-        p.push(format!("twp-ss-script-{}-{}.sh", std::process::id(), cfg.output.file_name().unwrap_or_default().to_string_lossy()));
+        p.push(format!(
+            "twp-ss-script-{}-{}.sh",
+            std::process::id(),
+            cfg.output.file_name().unwrap_or_default().to_string_lossy()
+        ));
         p
     };
     let _ = fs::remove_file(&sig_file);
@@ -445,8 +454,7 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
         cfg.command.join(" "),
         sig_file.display()
     );
-    fs::write(&script_file, &script_content)
-        .map_err(|e| format!("failed to write script: {e}"))?;
+    fs::write(&script_file, &script_content).map_err(|e| format!("failed to write script: {e}"))?;
 
     let mut kitty_args: Vec<String> = vec![
         format!("--class={}", cfg.class),
@@ -470,7 +478,10 @@ fn capture_one(cfg: &CaptureConfig) -> Result<Vec<u8>, String> {
     if let Some(ref proxy) = cfg.proxy {
         kitty_args.push(proxy.clone());
     }
-    kitty_args.extend(["bash".to_string(), script_file.to_string_lossy().to_string()]);
+    kitty_args.extend([
+        "bash".to_string(),
+        script_file.to_string_lossy().to_string(),
+    ]);
 
     let mut kitty = Command::new("kitty")
         .args(&kitty_args)
@@ -649,7 +660,12 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
                     native_png: None,
                     twp_png: None,
                     category: tc.category.to_string(),
-                    native_label: if tc.native_uses_proxy { "Kitty native" } else { "Kitty OSC 66" }.to_string(),
+                    native_label: if tc.native_uses_proxy {
+                        "Kitty native"
+                    } else {
+                        "Kitty OSC 66"
+                    }
+                    .to_string(),
                 });
                 continue;
             }
@@ -671,7 +687,12 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
                     native_png: Some(native_png),
                     twp_png: None,
                     category: tc.category.to_string(),
-                    native_label: if tc.native_uses_proxy { "Kitty native" } else { "Kitty OSC 66" }.to_string(),
+                    native_label: if tc.native_uses_proxy {
+                        "Kitty native"
+                    } else {
+                        "Kitty OSC 66"
+                    }
+                    .to_string(),
                 });
                 continue;
             }
@@ -700,7 +721,12 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
             native_png: Some(native_png),
             twp_png: Some(twp_png),
             category: tc.category.to_string(),
-            native_label: if tc.native_uses_proxy { "Kitty native" } else { "Kitty OSC 66" }.to_string(),
+            native_label: if tc.native_uses_proxy {
+                "Kitty native"
+            } else {
+                "Kitty OSC 66"
+            }
+            .to_string(),
         });
     }
 
@@ -710,102 +736,97 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
     // Scoped so the `entries`-borrowing closure is dropped before the
     // comparison loop below (which also touches `entries`).
     {
-    // Capture one render-only showcase widget and record it. Returns whether
-    // it rendered. `cols`/`rows` control the kitty window the widget renders
-    // into (bigger widgets need a bigger window).
-    let mut run_showcase = |name: &str,
-                            category: &str,
-                            twp_cmd: String,
-                            win_cols: u32,
-                            win_rows: u32|
-     -> bool {
-        eprint!("  {name}: ");
-        let cfg_sc = CaptureConfig {
-            output: cfg.results_dir.join(format!("twp_{name}.png")),
-            display: display.clone(),
-            proxy: Some(cfg.proxy_path.clone()),
-            font: cfg.font.clone(),
-            font_size: cfg.font_size.clone(),
-            cols: win_cols,
-            rows: win_rows,
-            bg: "#0a1e24".to_string(),
-            fg: "#ecefc1".to_string(),
-            palette: Vec::new(),
-            class: "twp-screenshot".to_string(),
-            timeout: 15,
-            command: vec![twp_cmd],
-        };
-        match capture_one(&cfg_sc) {
-            Ok(png) => {
-                eprintln!("RENDERED");
-                entries.push(TestEntry {
-                    name: name.to_string(),
-                    result: CompareResult {
-                        status: TestStatus::Pass,
-                        matches: 0,
-                        total: 0,
-                        mismatches: vec![],
-                    },
-                    native_png: None,
-                    twp_png: Some(png),
-                    category: category.to_string(),
-                    native_label: "(no terminal equivalent)".to_string(),
-                });
-                true
-            }
-            Err(e) => {
-                eprintln!("FAIL ({e})");
-                entries.push(TestEntry {
-                    name: name.to_string(),
-                    result: CompareResult {
-                        status: TestStatus::Fail(format!("render failed: {e}")),
-                        matches: 0,
-                        total: 0,
-                        mismatches: vec![],
-                    },
-                    native_png: None,
-                    twp_png: None,
-                    category: category.to_string(),
-                    native_label: "(no terminal equivalent)".to_string(),
-                });
-                false
-            }
-        }
-    };
-
-    let mut showcase_category = "";
-    for sc in SHOWCASE {
-        if sc.category != showcase_category {
-            showcase_category = sc.category;
-            let label = match showcase_category {
-                "css-effects" => "CSS text effects (visual only)",
-                "mini-ui" => "Mini UIs (visual only)",
-                other => other,
+        // Capture one render-only showcase widget and record it. Returns whether
+        // it rendered. `cols`/`rows` control the kitty window the widget renders
+        // into (bigger widgets need a bigger window).
+        let mut run_showcase =
+            |name: &str, category: &str, twp_cmd: String, win_cols: u32, win_rows: u32| -> bool {
+                eprint!("  {name}: ");
+                let cfg_sc = CaptureConfig {
+                    output: cfg.results_dir.join(format!("twp_{name}.png")),
+                    display: display.clone(),
+                    proxy: Some(cfg.proxy_path.clone()),
+                    font: cfg.font.clone(),
+                    font_size: cfg.font_size.clone(),
+                    cols: win_cols,
+                    rows: win_rows,
+                    bg: "#0a1e24".to_string(),
+                    fg: "#ecefc1".to_string(),
+                    palette: Vec::new(),
+                    class: "twp-screenshot".to_string(),
+                    timeout: 15,
+                    command: vec![twp_cmd],
+                };
+                match capture_one(&cfg_sc) {
+                    Ok(png) => {
+                        eprintln!("RENDERED");
+                        entries.push(TestEntry {
+                            name: name.to_string(),
+                            result: CompareResult {
+                                status: TestStatus::Pass,
+                                matches: 0,
+                                total: 0,
+                                mismatches: vec![],
+                            },
+                            native_png: None,
+                            twp_png: Some(png),
+                            category: category.to_string(),
+                            native_label: "(no terminal equivalent)".to_string(),
+                        });
+                        true
+                    }
+                    Err(e) => {
+                        eprintln!("FAIL ({e})");
+                        entries.push(TestEntry {
+                            name: name.to_string(),
+                            result: CompareResult {
+                                status: TestStatus::Fail(format!("render failed: {e}")),
+                                matches: 0,
+                                total: 0,
+                                mismatches: vec![],
+                            },
+                            native_png: None,
+                            twp_png: None,
+                            category: category.to_string(),
+                            native_label: "(no terminal equivalent)".to_string(),
+                        });
+                        false
+                    }
+                }
             };
-            eprintln!("── {label} ──");
-        }
-        // The static showcases fit comfortably in a 60×10 window.
-        if run_showcase(sc.name, sc.category, sc.twp_cmd.to_string(), 60, 10) {
-            pass += 1;
-        } else {
-            fail += 1;
-        }
-    }
 
-    // Generated "mini-app" demos (code+minimap, heatmap, chart, chat).
-    eprintln!("── Mini apps (visual only) ──");
-    for demo in demos::generated_demos() {
-        let twp_cmd = demo_twp_cmd(demo.cols, demo.rows, &demo.scene);
-        // Render into a window a little larger than the widget so nothing
-        // is clipped at the edges.
-        let (win_c, win_r) = (demo.cols + 6, demo.rows + 4);
-        if run_showcase(demo.name, demo.category, twp_cmd, win_c, win_r) {
-            pass += 1;
-        } else {
-            fail += 1;
+        let mut showcase_category = "";
+        for sc in SHOWCASE {
+            if sc.category != showcase_category {
+                showcase_category = sc.category;
+                let label = match showcase_category {
+                    "css-effects" => "CSS text effects (visual only)",
+                    "mini-ui" => "Mini UIs (visual only)",
+                    other => other,
+                };
+                eprintln!("── {label} ──");
+            }
+            // The static showcases fit comfortably in a 60×10 window.
+            if run_showcase(sc.name, sc.category, sc.twp_cmd.to_string(), 60, 10) {
+                pass += 1;
+            } else {
+                fail += 1;
+            }
         }
-    }
 
+        // Generated "mini-app" demos (code+minimap, heatmap, chart, chat).
+        eprintln!("── Mini apps (visual only) ──");
+        for demo in demos::generated_demos() {
+            let twp_cmd = demo_twp_cmd(demo.cols, demo.rows, &demo.scene);
+            // Render into a window a little larger than the widget so nothing
+            // is clipped at the edges.
+            let (win_c, win_r) = (demo.cols + 6, demo.rows + 4);
+            if run_showcase(demo.name, demo.category, twp_cmd, win_c, win_r) {
+                pass += 1;
+            } else {
+                fail += 1;
+            }
+        }
     } // end run_showcase scope
 
     // Native-vs-TWP comparisons: capture a native terminal command and a TWP
@@ -866,9 +887,19 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
         entries.push(TestEntry {
             name: format!("{} — {}", cmp.name, cmp.label),
             result: if ok {
-                CompareResult { status: TestStatus::Pass, matches: 0, total: 0, mismatches: vec![] }
+                CompareResult {
+                    status: TestStatus::Pass,
+                    matches: 0,
+                    total: 0,
+                    mismatches: vec![],
+                }
             } else {
-                CompareResult { status: TestStatus::Fail("render failed".into()), matches: 0, total: 0, mismatches: vec![] }
+                CompareResult {
+                    status: TestStatus::Fail("render failed".into()),
+                    matches: 0,
+                    total: 0,
+                    mismatches: vec![],
+                }
             },
             native_png,
             twp_png,
@@ -915,9 +946,19 @@ fn run_tests(cfg: &TestConfig) -> ExitCode {
         entries.push(TestEntry {
             name: format!("{} — {}", td.name, td.label),
             result: if ok {
-                CompareResult { status: TestStatus::Pass, matches: 0, total: 0, mismatches: vec![] }
+                CompareResult {
+                    status: TestStatus::Pass,
+                    matches: 0,
+                    total: 0,
+                    mismatches: vec![],
+                }
             } else {
-                CompareResult { status: TestStatus::Fail("render failed".into()), matches: 0, total: 0, mismatches: vec![] }
+                CompareResult {
+                    status: TestStatus::Fail("render failed".into()),
+                    matches: 0,
+                    total: 0,
+                    mismatches: vec![],
+                }
             },
             native_png: None,
             twp_png,
@@ -993,9 +1034,7 @@ fn main_test(args: &[String]) -> ExitCode {
     let mut font_size = String::new();
 
     // Read font from kitty config
-    if let Ok(contents) = fs::read_to_string(
-        dirs_from_home(".config/kitty/kitty.conf"),
-    ) {
+    if let Ok(contents) = fs::read_to_string(dirs_from_home(".config/kitty/kitty.conf")) {
         for line in contents.lines() {
             if let Some(rest) = line.strip_prefix("font_family") {
                 if font.is_empty() {
@@ -1090,17 +1129,50 @@ fn parse_capture_args(args: &[String]) -> Result<CaptureConfig, String> {
                 command = args[i + 1..].to_vec();
                 break;
             }
-            "--output" | "-o" => { i += 1; output = Some(PathBuf::from(&args[i])); }
-            "--display" => { i += 1; display = args[i].clone(); }
-            "--proxy" => { i += 1; proxy = Some(args[i].clone()); }
-            "--font" => { i += 1; font = args[i].clone(); }
-            "--font-size" => { i += 1; font_size = args[i].clone(); }
-            "--cols" => { i += 1; cols = args[i].parse().map_err(|_| "invalid --cols")?; }
-            "--rows" => { i += 1; rows = args[i].parse().map_err(|_| "invalid --rows")?; }
-            "--bg" => { i += 1; bg = args[i].clone(); }
-            "--fg" => { i += 1; fg = args[i].clone(); }
-            "--class" => { i += 1; class = args[i].clone(); }
-            "--timeout" => { i += 1; timeout = args[i].parse().map_err(|_| "invalid --timeout")?; }
+            "--output" | "-o" => {
+                i += 1;
+                output = Some(PathBuf::from(&args[i]));
+            }
+            "--display" => {
+                i += 1;
+                display = args[i].clone();
+            }
+            "--proxy" => {
+                i += 1;
+                proxy = Some(args[i].clone());
+            }
+            "--font" => {
+                i += 1;
+                font = args[i].clone();
+            }
+            "--font-size" => {
+                i += 1;
+                font_size = args[i].clone();
+            }
+            "--cols" => {
+                i += 1;
+                cols = args[i].parse().map_err(|_| "invalid --cols")?;
+            }
+            "--rows" => {
+                i += 1;
+                rows = args[i].parse().map_err(|_| "invalid --rows")?;
+            }
+            "--bg" => {
+                i += 1;
+                bg = args[i].clone();
+            }
+            "--fg" => {
+                i += 1;
+                fg = args[i].clone();
+            }
+            "--class" => {
+                i += 1;
+                class = args[i].clone();
+            }
+            "--timeout" => {
+                i += 1;
+                timeout = args[i].parse().map_err(|_| "invalid --timeout")?;
+            }
             "--help" | "-h" => return Err(USAGE.to_string()),
             other => return Err(format!("unknown argument: {other}\n{USAGE}")),
         }
@@ -1113,8 +1185,19 @@ fn parse_capture_args(args: &[String]) -> Result<CaptureConfig, String> {
     }
 
     Ok(CaptureConfig {
-        output, display, proxy, font, font_size,
-        cols, rows, bg, fg, palette: Vec::new(), class, timeout, command,
+        output,
+        display,
+        proxy,
+        font,
+        font_size,
+        cols,
+        rows,
+        bg,
+        fg,
+        palette: Vec::new(),
+        class,
+        timeout,
+        command,
     })
 }
 

@@ -16,11 +16,7 @@ pub struct TestEntry {
     pub native_label: String,
 }
 
-pub fn generate_html(
-    entries: &[TestEntry],
-    font_info: &str,
-    output: &Path,
-) -> io::Result<()> {
+pub fn generate_html(entries: &[TestEntry], font_info: &str, output: &Path) -> io::Result<()> {
     let pass = entries.iter().filter(|e| e.result.is_pass()).count();
     let fail = entries.len() - pass;
 
@@ -49,9 +45,7 @@ pub fn generate_html(
 <h1>TWP Visual Comparison Report</h1>
 "#);
 
-    html.push_str(&format!(
-        "<p class=\"meta\">{font_info}</p>\n"
-    ));
+    html.push_str(&format!("<p class=\"meta\">{font_info}</p>\n"));
     html.push_str("<p class=\"note\">Screenshots from Kitty running <code>twp-proxy</code> on a headless Xvfb display (llvmpipe software rendering). Captured via <code>twp-screenshot</code>. Basic tests compare native text vs TWP mono widget. Text-sizing tests compare Kitty OSC 66 output vs TWP mono with equivalent <code>scale</code>, <code>char-width</code>, and <code>subscale</code> parameters.</p>\n");
 
     html.push_str("<div class=\"summary\">\n");
@@ -79,18 +73,23 @@ pub fn generate_html(
                 "mini-app" => "Mini apps (minimap, heatmap, charts, chat)",
                 "svg" => "Vector graphics (SVG — curves, arcs, gauges)",
                 "term" => "Terminal colors (theme-matched via term())",
-                "term-compare" => "term() reacts to the session theme (native ANSI vs TWP, per theme)",
+                "term-compare" => {
+                    "term() reacts to the session theme (native ANSI vs TWP, per theme)"
+                }
                 "term-themed" => "Theme-derived widget — every colour from term() + color-mix()",
                 other => other,
             };
-            html.push_str(&format!(
-                "<h2 class=\"section\">{title}</h2>\n"
-            ));
+            html.push_str(&format!("<h2 class=\"section\">{title}</h2>\n"));
         }
 
         let showcase = matches!(
             entry.category.as_str(),
-            "css-effects" | "mini-ui" | "mini-app" | "svg" | "term" | "term-compare"
+            "css-effects"
+                | "mini-ui"
+                | "mini-app"
+                | "svg"
+                | "term"
+                | "term-compare"
                 | "term-themed"
         );
         let summary = entry.result.summary();
@@ -102,7 +101,9 @@ pub fn generate_html(
         };
 
         // Showcase entries have no comparison metric — show just the status.
-        let metrics = if showcase { String::new() } else {
+        let metrics = if showcase {
+            String::new()
+        } else {
             format!("<p class=\"metrics\">{summary}</p>")
         };
         html.push_str(&format!(
@@ -129,9 +130,7 @@ pub fn generate_html(
             html.push_str(&format!("<div class=\"img-box\"><h3>{label}</h3>\n"));
             if let Some(data) = png_data {
                 let b64 = STANDARD.encode(data);
-                html.push_str(&format!(
-                    "<img src=\"data:image/png;base64,{b64}\">\n"
-                ));
+                html.push_str(&format!("<img src=\"data:image/png;base64,{b64}\">\n"));
             } else {
                 html.push_str("<p style=\"color:#64748b\">not available</p>\n");
             }

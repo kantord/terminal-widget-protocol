@@ -107,16 +107,15 @@ pub fn cell_fill(img: &RgbaImage, ncols: u32) -> (Vec<bool>, u32) {
     (filled, count)
 }
 
-pub fn compare_images(
-    native: &RgbaImage,
-    twp: &RgbaImage,
-    text: &str,
-    cols: u32,
-) -> CompareResult {
+pub fn compare_images(native: &RgbaImage, twp: &RgbaImage, text: &str, cols: u32) -> CompareResult {
     let (kit_cells, kit_n) = cell_fill(native, cols);
     let (twp_cells, twp_n) = cell_fill(twp, cols);
 
-    let expected_filled = text.chars().take(cols as usize).filter(|&c| c != ' ').count() as u32;
+    let expected_filled = text
+        .chars()
+        .take(cols as usize)
+        .filter(|&c| c != ' ')
+        .count() as u32;
     let min_ink = (expected_filled / 2).max(1);
 
     if kit_n < min_ink {

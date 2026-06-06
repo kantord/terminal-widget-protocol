@@ -29,9 +29,7 @@ pub fn transmit_image(id: u32, png_bytes: &[u8], cols: u32, rows: u32) -> Vec<u8
 
     if encoded.len() <= CHUNK {
         out.extend_from_slice(b"\x1b_G");
-        out.extend_from_slice(
-            format!("a=T,f=100,i={id},U=1,c={cols},r={rows},q=2").as_bytes(),
-        );
+        out.extend_from_slice(format!("a=T,f=100,i={id},U=1,c={cols},r={rows},q=2").as_bytes());
         out.push(b';');
         out.extend_from_slice(encoded.as_bytes());
         out.extend_from_slice(b"\x1b\\");

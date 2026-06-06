@@ -23,9 +23,7 @@ mod tests {
         } else {
             format!("\"color\":\"#000000\",\"background\":\"#ffffff\",{extra_style}")
         };
-        let json = format!(
-            "{{\"S\":{{\"n\":\"mono\",\"t\":\"{text}\",\"s\":{{{style}}}}}}}"
-        );
+        let json = format!("{{\"S\":{{\"n\":\"mono\",\"t\":\"{text}\",\"s\":{{{style}}}}}}}");
         let payload: Payload = serde_json::from_str(&json).unwrap();
         let scene = expand(payload.scene.unwrap(), &payload.defs);
         let png = render_to_png(&scene, cols, rows);
@@ -176,10 +174,7 @@ mod tests {
         // Each character in scale=2 should have ink in a 2-cell-wide column
         let ink2 = ink_per_cell(&img2, cell_w * 2, 3);
         for (i, &count) in ink2.iter().enumerate() {
-            assert!(
-                count > 0,
-                "scale=2 cell {i} has no ink"
-            );
+            assert!(count > 0, "scale=2 cell {i} has no ink");
         }
     }
 
@@ -226,7 +221,11 @@ mod tests {
         let cols = text.len() as u32;
         let img1 = render_mono(text, cols, 1, "");
         let img2 = render_mono(text, cols, 1, "");
-        assert_eq!(img1.as_raw(), img2.as_raw(), "identical inputs must produce identical output");
+        assert_eq!(
+            img1.as_raw(),
+            img2.as_raw(),
+            "identical inputs must produce identical output"
+        );
     }
 
     #[test]
@@ -325,12 +324,7 @@ mod tests {
     fn text_stroke_adds_ink() {
         // An outline stroke widens each glyph, adding ink.
         let plain = render_mono("OOOO", 6, 1, "");
-        let stroked = render_mono(
-            "OOOO",
-            6,
-            1,
-            "\"-webkit-text-stroke\":\"2px #000000\"",
-        );
+        let stroked = render_mono("OOOO", 6, 1, "\"-webkit-text-stroke\":\"2px #000000\"");
         assert!(
             total_ink(&stroked) > total_ink(&plain),
             "stroke should add ink"
@@ -374,7 +368,10 @@ mod tests {
         let json = "{\"S\":{\"n\":\"box\",\"s\":{\"width\":\"100%\",\"height\":\"100%\",\"background\":\"term(1)\"}}}";
         let img = render_payload(json, 3, 3);
         let p = img.get_pixel(img.width() / 2, img.height() / 2);
-        assert!(p[0] > 150 && p[1] < 60 && p[2] < 60, "term(1) should be red, got {p:?}");
+        assert!(
+            p[0] > 150 && p[1] < 60 && p[2] < 60,
+            "term(1) should be red, got {p:?}"
+        );
     }
 
     #[test]
@@ -422,7 +419,10 @@ mod tests {
         );
         // A corner is uncovered by the small top box, so it stays red.
         let corner = img.get_pixel(2, 2);
-        assert!(corner[0] > 200 && corner[2] < 80, "corner should be base red");
+        assert!(
+            corner[0] > 200 && corner[2] < 80,
+            "corner should be base red"
+        );
     }
 
     #[test]

@@ -24,7 +24,10 @@ use takumi::{
         },
     },
     rendering::{ImageOutputFormat, RenderOptions, measure_layout, render, write_image},
-    resources::{font::FontResource, image::{ImageSource, SvgSource}},
+    resources::{
+        font::FontResource,
+        image::{ImageSource, SvgSource},
+    },
 };
 
 use crate::protocol::{Border, Dimension, FontWeight, Img, Node};
@@ -84,9 +87,7 @@ fn palette() -> Palette {
 pub fn palette_from_base(base16: [[u8; 3]; 16], fg: [u8; 3], bg: [u8; 3]) -> Palette {
     let mut ansi = [[0u8; 3]; 256];
     ansi[..16].copy_from_slice(&base16);
-    let cube = |c: usize| -> u8 {
-        if c == 0 { 0 } else { (55 + c * 40) as u8 }
-    };
+    let cube = |c: usize| -> u8 { if c == 0 { 0 } else { (55 + c * 40) as u8 } };
     for (n, slot) in ansi[16..232].iter_mut().enumerate() {
         *slot = [cube((n / 36) % 6), cube((n / 6) % 6), cube(n % 6)];
     }
@@ -100,10 +101,22 @@ pub fn palette_from_base(base16: [[u8; 3]; 16], fg: [u8; 3], bg: [u8; 3]) -> Pal
 pub fn default_palette() -> Palette {
     // Standard xterm 16-color defaults.
     let base: [[u8; 3]; 16] = [
-        [0, 0, 0], [205, 0, 0], [0, 205, 0], [205, 205, 0],
-        [0, 0, 238], [205, 0, 205], [0, 205, 205], [229, 229, 229],
-        [127, 127, 127], [255, 0, 0], [0, 255, 0], [255, 255, 0],
-        [92, 92, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255],
+        [0, 0, 0],
+        [205, 0, 0],
+        [0, 205, 0],
+        [205, 205, 0],
+        [0, 0, 238],
+        [205, 0, 205],
+        [0, 205, 205],
+        [229, 229, 229],
+        [127, 127, 127],
+        [255, 0, 0],
+        [0, 255, 0],
+        [255, 255, 0],
+        [92, 92, 255],
+        [255, 0, 255],
+        [0, 255, 255],
+        [255, 255, 255],
     ];
     palette_from_base(base, [229, 229, 229], [0, 0, 0])
 }
@@ -115,7 +128,11 @@ pub(crate) fn resolve_term(s: &str) -> Option<[u8; 3]> {
     match inner {
         "fg" => Some(pal.fg),
         "bg" => Some(pal.bg),
-        _ => inner.parse::<usize>().ok().filter(|&i| i < 256).map(|i| pal.ansi[i]),
+        _ => inner
+            .parse::<usize>()
+            .ok()
+            .filter(|&i| i < 256)
+            .map(|i| pal.ansi[i]),
     }
 }
 
@@ -147,7 +164,7 @@ pub(crate) fn substitute_term(value: &str) -> String {
     out
 }
 
-/// Resolve `m`-cell units (`3mcw`, `0.5mch`, `1mcmin`, `1mcmax`) embedded in a
+/// Resolve `m`-cell units (`3mcw`, `0.5much`, `1mcmin`, `1mcmax`) embedded in a
 /// CSS *value* string to pixels, so they work in the passthrough path too (not
 /// just the typed `width`/`height`/`gap`/`padding` fields). Anything that isn't
 /// `<number><cell-unit>` is copied through untouched.
@@ -158,7 +175,7 @@ pub(crate) fn substitute_cell_units(value: &str) -> String {
         ("mcmin", pc.min(pr)),
         ("mcmax", pc.max(pr)),
         ("mcw", pc),
-        ("mch", pr),
+        ("much", pr),
     ];
     let b = value.as_bytes();
     let mut out = String::with_capacity(value.len());
@@ -329,7 +346,12 @@ fn read_kitty_fonts() -> KittyFonts {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        for key in ["font_family", "bold_font", "italic_font", "bold_italic_font"] {
+        for key in [
+            "font_family",
+            "bold_font",
+            "italic_font",
+            "bold_italic_font",
+        ] {
             if let Some(rest) = line.strip_prefix(key) {
                 let value = extract_family(rest.trim());
                 match key {
@@ -397,7 +419,13 @@ fn context() -> &'static GlobalContext {
         // The bold/italic slots fall back to the regular face when no real
         // variant was found. The result may not look bolder, but it stays
         // monospace — never a proportional fallback that breaks the cell grid.
-        load_variant(&mut ctx, set.regular.as_deref(), FAMILY_REGULAR, false, false);
+        load_variant(
+            &mut ctx,
+            set.regular.as_deref(),
+            FAMILY_REGULAR,
+            false,
+            false,
+        );
         load_variant(
             &mut ctx,
             set.bold.as_deref().or(set.regular.as_deref()),
@@ -449,7 +477,11 @@ fn load_variant(
     use parley::fontique::{FontInfoOverride, FontStyle, FontWeight as FqWeight};
     let override_info = FontInfoOverride {
         family_name: Some(family_name),
-        weight: Some(if bold { FqWeight::BOLD } else { FqWeight::NORMAL }),
+        weight: Some(if bold {
+            FqWeight::BOLD
+        } else {
+            FqWeight::NORMAL
+        }),
         style: Some(if italic {
             FontStyle::Italic
         } else {
@@ -475,10 +507,7 @@ fn load_variant(
                 );
             }
         }
-        Err(e) => eprintln!(
-            "twp-proxy: failed to load {}: {e:?}",
-            path.display()
-        ),
+        Err(e) => eprintln!("twp-proxy: failed to load {}: {e:?}", path.display()),
     }
 }
 
@@ -502,7 +531,11 @@ fn natural_advance(font_size_px: f32, weight: u16) -> f32 {
     // can divide by char count for per-glyph advance. Wrap the text in a
     // flex container so parley produces an inline run we can read.
     let sample = "0123456789 abcdefghij klmnopqrstu vwxyz ABCDE";
-    let family_key = if weight >= 700 { FAMILY_BOLD } else { FAMILY_REGULAR };
+    let family_key = if weight >= 700 {
+        FAMILY_BOLD
+    } else {
+        FAMILY_REGULAR
+    };
     let mut probe_style = TkStyle::default()
         .with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
             font_size_px,
@@ -513,9 +546,8 @@ fn natural_advance(font_size_px: f32, weight: u16) -> f32 {
         probe_style = probe_style.with(StyleDeclaration::font_family(ff));
     }
     let text_node = TakumiNode::text(sample).with_style(probe_style);
-    let probe = TakumiNode::container(vec![text_node]).with_style(
-        TkStyle::default().with(StyleDeclaration::display(Display::Flex)),
-    );
+    let probe = TakumiNode::container(vec![text_node])
+        .with_style(TkStyle::default().with(StyleDeclaration::display(Display::Flex)));
     let opts = RenderOptions::builder()
         .viewport(Viewport::new((4096u32, 256u32)))
         .node(probe)
@@ -563,19 +595,17 @@ pub fn render_to_png(scene: &Node, cols: u32, rows: u32) -> Vec<u8> {
         .build();
     let img = render(opts).expect("takumi render");
     let mut buf = Vec::with_capacity(8 * 1024);
-    write_image(Cow::Owned(img), &mut buf, ImageOutputFormat::Png, None)
-        .expect("png encode");
+    write_image(Cow::Owned(img), &mut buf, ImageOutputFormat::Png, None).expect("png encode");
     buf
 }
 
 /// Raw bytes for an `img` node, decoded from base64 (`t=d`) or read from a
 /// file (`t=f`). Returns None if no source resolves.
 fn img_source_bytes(img: &Img) -> Option<Vec<u8>> {
-    let medium = img.transmission.as_deref().unwrap_or(if img.data.is_some() {
-        "d"
-    } else {
-        "f"
-    });
+    let medium = img
+        .transmission
+        .as_deref()
+        .unwrap_or(if img.data.is_some() { "d" } else { "f" });
     match medium {
         "d" => STANDARD.decode(img.data.as_deref()?.trim()).ok(),
         "f" => std::fs::read(img.path.as_deref()?).ok(),
@@ -718,7 +748,7 @@ fn to_takumi(node: &Node) -> TakumiNode {
 /// vocabulary's "unknown props silently ignored" behavior.
 fn css_passthrough_decls(extra: &HashMap<String, serde_json::Value>) -> Vec<StyleDeclaration> {
     let mut decls = Vec::new();
-    // Parse each property on its own so one unparseable value is dropped in
+    // Parse each property on its own so one unparsable value is dropped in
     // isolation rather than discarding the whole style (takumi's block parser
     // is all-or-nothing).
     for (key, value) in extra {
@@ -781,7 +811,11 @@ fn build_mono(node: &Node) -> TakumiNode {
         Some(FontWeight::Number(n)) => *n,
         _ => 400,
     };
-    let family_key = if weight >= 700 { FAMILY_BOLD } else { FAMILY_REGULAR };
+    let family_key = if weight >= 700 {
+        FAMILY_BOLD
+    } else {
+        FAMILY_REGULAR
+    };
     // Foreground as a declaration: fast path via parse_color (term/hex), else
     // takumi's colour parser for derived colours (color-mix(), relative rgb()).
     let fg_decl: Option<StyleDeclaration> = s.color.as_deref().and_then(|v| {
@@ -805,9 +839,7 @@ fn build_mono(node: &Node) -> TakumiNode {
                 .with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
                     font_size_px,
                 ))))
-                .with(StyleDeclaration::font_feature_settings(
-                    disable_ligatures(),
-                ));
+                .with(StyleDeclaration::font_feature_settings(disable_ligatures()));
             if let Ok(ff) = FontFamily::from_str(&format!("\"{family_key}\"")) {
                 char_style = char_style.with(StyleDeclaration::font_family(ff));
             }
@@ -967,7 +999,11 @@ fn build_style(node: &Node) -> TkStyle {
     // All implementation magic — the protocol's `text` node just
     // declares a string; how the rasterizer does the rest is our problem.
     if node.n == "text" {
-        let family_key = if weight >= 700 { FAMILY_BOLD } else { FAMILY_REGULAR };
+        let family_key = if weight >= 700 {
+            FAMILY_BOLD
+        } else {
+            FAMILY_REGULAR
+        };
         if let Ok(ff) = FontFamily::from_str(&format!("\"{family_key}\"")) {
             style = style.with(StyleDeclaration::font_family(ff));
         }
@@ -1127,8 +1163,8 @@ fn parse_text_align(s: &str) -> Option<TextAlign> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::Payload;
     use crate::expand::expand;
+    use crate::protocol::Payload;
 
     fn render_json(json: &str, cols: u32, rows: u32) -> Vec<u8> {
         let payload: Payload = serde_json::from_str(json).unwrap();

@@ -61,7 +61,13 @@ fn now_playing_bar() -> Demo {
              "width":"100%","height":"100%","background":"#0f172a"},
         "c":[play, track, time]
     }});
-    Demo { name: "now_playing_bar", category: "mini-ui", cols: 34, rows: 3, scene }
+    Demo {
+        name: "now_playing_bar",
+        category: "mini-ui",
+        cols: 34,
+        rows: 3,
+        scene,
+    }
 }
 
 /// SVG that uses terminal colors: bars filled with `term()` palette colors and
@@ -82,13 +88,20 @@ fn svg_themed_chart() -> Demo {
         json!({"n":"mono","t":"3xx","s":{"color":"term(4)"}}),
         json!({"n":"mono","t":"5xx","s":{"color":"term(1)"}})
     ]});
-    let title = json!({"n":"mono","t":"responses by status","s":{"color":"term(fg)","font-weight":"bold"}});
+    let title =
+        json!({"n":"mono","t":"responses by status","s":{"color":"term(fg)","font-weight":"bold"}});
     let scene = json!({"S":{
         "n":"flex",
         "s":{"flex-direction":"column","gap":8,"padding":14,"width":"100%","height":"100%","background":"transparent"},
         "c":[title, chart, legend]
     }});
-    Demo { name: "svg_themed_chart", category: "term", cols: 38, rows: 10, scene }
+    Demo {
+        name: "svg_themed_chart",
+        category: "term",
+        cols: 38,
+        rows: 10,
+        scene,
+    }
 }
 
 /// A native-vs-TWP comparison: a native terminal command (captured in bare
@@ -128,9 +141,9 @@ pub fn themes() -> Vec<Theme> {
             bg: "#282828",
             fg: "#ebdbb2",
             ansi: [
-                "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286",
-                "#689d6a", "#a89984", "#928374", "#fb4934", "#b8bb26", "#fabd2f",
-                "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
+                "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a",
+                "#a89984", "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b",
+                "#8ec07c", "#ebdbb2",
             ],
         },
         Theme {
@@ -138,9 +151,9 @@ pub fn themes() -> Vec<Theme> {
             bg: "#282a36",
             fg: "#f8f8f2",
             ansi: [
-                "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6",
-                "#8be9fd", "#f8f8f2", "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5",
-                "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
+                "#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd",
+                "#f8f8f2", "#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df",
+                "#a4ffff", "#ffffff",
             ],
         },
         Theme {
@@ -148,9 +161,9 @@ pub fn themes() -> Vec<Theme> {
             bg: "#fdf6e3",
             fg: "#657b83",
             ansi: [
-                "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682",
-                "#2aa198", "#eee8d5", "#002b36", "#cb4b16", "#586e75", "#657b83",
-                "#839496", "#6c71c4", "#93a1a1", "#fdf6e3",
+                "#073642", "#dc322f", "#859900", "#b58900", "#268bd2", "#d33682", "#2aa198",
+                "#eee8d5", "#002b36", "#cb4b16", "#586e75", "#657b83", "#839496", "#6c71c4",
+                "#93a1a1", "#fdf6e3",
             ],
         },
         Theme {
@@ -158,9 +171,9 @@ pub fn themes() -> Vec<Theme> {
             bg: "#2e3440",
             fg: "#d8dee9",
             ansi: [
-                "#3b4252", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead",
-                "#88c0d0", "#e5e9f0", "#4c566a", "#bf616a", "#a3be8c", "#ebcb8b",
-                "#81a1c1", "#b48ead", "#8fbcbb", "#eceff4",
+                "#3b4252", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#88c0d0",
+                "#e5e9f0", "#4c566a", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead",
+                "#8fbcbb", "#eceff4",
             ],
         },
     ]
@@ -189,10 +202,9 @@ fn term_palette_comparison(theme: Theme) -> Comparison {
     native.push_str("printf '\\n'");
 
     // TWP: the same 16 colors via term(N), 2 rows of 8 to match.
-    let swatch = |i: u32| json!({"n":"box","s":{"width":52,"height":40,"background":format!("term({i})")}});
-    let row = |range: std::ops::Range<u32>| {
-        json!({"n":"flex","s":{"flex-direction":"row","gap":2},"c":range.map(swatch).collect::<Vec<_>>()})
-    };
+    let swatch =
+        |i: u32| json!({"n":"box","s":{"width":52,"height":40,"background":format!("term({i})")}});
+    let row = |range: std::ops::Range<u32>| json!({"n":"flex","s":{"flex-direction":"row","gap":2},"c":range.map(swatch).collect::<Vec<_>>()});
     let scene = json!({"S":{
         "n":"flex",
         "s":{"flex-direction":"column","gap":4,"justify-content":"center","align-items":"start","width":"100%","height":"100%","background":"term(bg)","padding":6},
@@ -218,7 +230,8 @@ fn term_palette_comparison(theme: Theme) -> Comparison {
 /// through) and theme colors (`term(1)`/`term(2)`/`term(3)`) — it reads as a
 /// native part of the terminal rather than a pasted rectangle.
 fn term_themed_card() -> Demo {
-    let dot = |c: &str| json!({"n":"box","s":{"width":10,"height":10,"border-radius":5,"background":c}});
+    let dot =
+        |c: &str| json!({"n":"box","s":{"width":10,"height":10,"border-radius":5,"background":c}});
     let row = |c: &str, label: &str| {
         json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":8},"c":[
             dot(c), json!({"n":"mono","t":label,"s":{"color":"term(fg)"}})
@@ -235,7 +248,13 @@ fn term_themed_card() -> Demo {
         "s":{"flex-direction":"column","gap":8,"padding":14,"width":"100%","height":"100%","background":"transparent"},
         "c":[title, rows]
     }});
-    Demo { name: "term_themed_card", category: "term", cols: 26, rows: 7, scene }
+    Demo {
+        name: "term_themed_card",
+        category: "term",
+        cols: 26,
+        rows: 7,
+        scene,
+    }
 }
 
 /// An `svg` node carrying inline SVG markup (it's text — a shell script could
@@ -267,9 +286,15 @@ fn svg_line_chart() -> Demo {
             line.push_str(&format!(" L {x:.1} {y:.1}"));
         }
         area.push_str(&format!(" L {x:.1} {y:.1}"));
-        dots.push_str(&format!("<circle cx='{x:.1}' cy='{y:.1}' r='3' fill='#38bdf8'/>"));
+        dots.push_str(&format!(
+            "<circle cx='{x:.1}' cy='{y:.1}' r='3' fill='#38bdf8'/>"
+        ));
     }
-    area.push_str(&format!(" L {:.1} {:.1} Z", pad + (n as f64 - 1.0) * dx, h - pad));
+    area.push_str(&format!(
+        " L {:.1} {:.1} Z",
+        pad + (n as f64 - 1.0) * dx,
+        h - pad
+    ));
 
     let svg = format!(
         "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {w} {h}'>\
@@ -288,7 +313,13 @@ fn svg_line_chart() -> Demo {
         "s":{"flex-direction":"column","gap":8,"padding":16,"width":"100%","height":"100%","background":"#0f172a"},
         "c":[title, chart]
     }});
-    Demo { name: "app_line_chart", category: "svg", cols: 40, rows: 9, scene }
+    Demo {
+        name: "app_line_chart",
+        category: "svg",
+        cols: 40,
+        rows: 9,
+        scene,
+    }
 }
 
 /// A donut chart (arc segments) beside a flex legend — SVG drawing composed
@@ -319,7 +350,8 @@ fn svg_donut() -> Demo {
         ));
         a = a1;
     }
-    let svg = format!("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'>{paths}</svg>");
+    let svg =
+        format!("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'>{paths}</svg>");
     let donut = svg_node(svg, 120, 120);
 
     let legend_rows: Vec<Value> = segs
@@ -338,7 +370,13 @@ fn svg_donut() -> Demo {
         "s":{"flex-direction":"row","align-items":"center","gap":20,"padding":16,"width":"100%","height":"100%","background":"#0f172a"},
         "c":[donut, legend]
     }});
-    Demo { name: "app_donut", category: "svg", cols: 40, rows: 9, scene }
+    Demo {
+        name: "app_donut",
+        category: "svg",
+        cols: 40,
+        rows: 9,
+        scene,
+    }
 }
 
 /// A speedometer-style gauge: a track arc, a value arc, and a needle — pure
@@ -374,7 +412,13 @@ fn svg_gauge() -> Demo {
         "s":{"flex-direction":"column","align-items":"center","gap":4,"padding":14,"width":"100%","height":"100%","background":"#0f172a"},
         "c":[gauge, label, caption]
     }});
-    Demo { name: "app_gauge", category: "svg", cols: 30, rows: 9, scene }
+    Demo {
+        name: "app_gauge",
+        category: "svg",
+        cols: 30,
+        rows: 9,
+        scene,
+    }
 }
 
 /// A demo plus the terminal theme to render it under — captured one-off with
@@ -490,7 +534,7 @@ fn docker_dashboard_scene() -> Value {
 
     let sans = "twp-sans";
 
-    // Sizes are in monospace cell units (mcw = cell widths, mch = cell heights,
+    // Sizes are in monospace cell units (mcw = cell widths, much = cell heights,
     // mcmin = min(w,h) for squares). The whole dashboard therefore aligns to the
     // character grid at *any* terminal's cell size, not just the one it was
     // drawn at. px remains only for sub-cell cosmetics (1px borders).
@@ -519,8 +563,8 @@ fn docker_dashboard_scene() -> Value {
     // ── Stat cards: two gauges + a gradient network area chart ──
     let gauge_card = |value: f64, fill: &str, label: &str| {
         let pct = format!("{}%", (value * 100.0).round() as i64);
-        json!({"n":"flex","s":{"flex-direction":"column","align-items":"center","justify-content":"center","gap":"0.1mch","width":"11.5mcw","height":"4.8mch","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.6mcw"},"c":[
-            json!({"n":"svg","t":gauge_svg(value, fill),"s":{"width":"9.2mcw","height":"2.2mch"}}),
+        json!({"n":"flex","s":{"flex-direction":"column","align-items":"center","justify-content":"center","gap":"0.1much","width":"11.5mcw","height":"4.8much","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.6mcw"},"c":[
+            json!({"n":"svg","t":gauge_svg(value, fill),"s":{"width":"9.2mcw","height":"2.2much"}}),
             json!({"n":"mono","t":pct,"s":{"color":fill,"font-weight":"bold"}}),
             json!({"n":"text","t":label,"s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}})
         ]})
@@ -550,12 +594,12 @@ fn docker_dashboard_scene() -> Value {
          <path d='{area}' fill='url(#ng)'/>\
          <path d='{line}' fill='none' stroke='term(4)' stroke-width='2' stroke-linejoin='round'/></svg>"
     );
-    let net_card = json!({"n":"flex","s":{"flex-direction":"column","flex-grow":1,"gap":"0.2mch","height":"4.8mch","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.75mcw"},"c":[
+    let net_card = json!({"n":"flex","s":{"flex-direction":"column","flex-grow":1,"gap":"0.2much","height":"4.8much","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.75mcw"},"c":[
         json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.6mcw"},"c":[
             json!({"n":"text","t":"Network I/O","s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}}),
             json!({"n":"mono","t":"↑ 4.2MB/s","s":{"color":blue}})
         ]}),
-        json!({"n":"svg","t":net_svg,"s":{"width":"100%","height":"2.4mch"}})
+        json!({"n":"svg","t":net_svg,"s":{"width":"100%","height":"2.4much"}})
     ]});
     let cards = json!({"n":"flex","s":{"flex-direction":"row","gap":"0.9mcw","width":"100%"},"c":[
         gauge_card(0.34, blue, "CPU"), gauge_card(0.61, cyan, "Memory"), net_card
@@ -564,8 +608,24 @@ fn docker_dashboard_scene() -> Value {
     // ── Container table ──
     // (name, image, status, cpu, mem, uptime, spark-seed)
     let rows: Vec<(&str, &str, &str, f64, f64, &str, u32)> = vec![
-        ("api-gateway", "nginx:1.27", "running", 0.12, 0.34, "4d 2h", 1),
-        ("postgres", "postgres:16", "running", 0.41, 0.62, "12d 6h", 3),
+        (
+            "api-gateway",
+            "nginx:1.27",
+            "running",
+            0.12,
+            0.34,
+            "4d 2h",
+            1,
+        ),
+        (
+            "postgres",
+            "postgres:16",
+            "running",
+            0.41,
+            0.62,
+            "12d 6h",
+            3,
+        ),
         ("redis", "redis:7.2", "running", 0.06, 0.18, "12d 6h", 5),
         ("worker-1", "app:2.3.1", "running", 0.78, 0.55, "3h 11m", 7),
         ("scheduler", "app:2.3.1", "running", 0.22, 0.30, "5d 9h", 9),
@@ -602,8 +662,8 @@ fn docker_dashboard_scene() -> Value {
             let dot = json!({"n":"box","s":{"width":"0.77mcmin","height":"0.77mcmin","border-radius":"0.4mcmin","background":sc}});
             let bar_fill = if *cpu < 0.5 { green } else if *cpu < 0.8 { yellow } else { red };
             let cpu_cell = gcell(cpu_w, json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.6mcw"},"c":[
-                json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","width":"5.4mcw","height":"0.25mch","background":row_line,"border-radius":"0.3mcmin"},"c":[
-                    json!({"n":"box","s":{"width":format!("{}%", (cpu*100.0).round() as i64),"height":"0.25mch","background":bar_fill,"border-radius":"0.3mcmin"}})
+                json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","width":"5.4mcw","height":"0.25much","background":row_line,"border-radius":"0.3mcmin"},"c":[
+                    json!({"n":"box","s":{"width":format!("{}%", (cpu*100.0).round() as i64),"height":"0.25much","background":bar_fill,"border-radius":"0.3mcmin"}})
                 ]}),
                 json!({"n":"mono","t":format!("{:>3}%", (cpu*100.0).round() as i64),"s":{"color":muted}})
             ]}));
@@ -616,7 +676,7 @@ fn docker_dashboard_scene() -> Value {
             let spark = sparkline_svg(&series, if running { cyan } else { dim }, 70.0, 18.0);
             // Badge sizes to its (padded) content so the pill always wraps the
             // word; the surrounding status cell is fixed-width for alignment.
-            let badge = json!({"n":"flex","s":{"justify-content":"center","align-items":"center","background":format!("color-mix(in srgb, {sc} 18%, term(bg))"),"border-radius":"0.45mcmin","padding-top":"0.1mch","padding-bottom":"0.1mch","padding-left":"0.5mcw","padding-right":"0.5mcw"},"c":[
+            let badge = json!({"n":"flex","s":{"justify-content":"center","align-items":"center","background":format!("color-mix(in srgb, {sc} 18%, term(bg))"),"border-radius":"0.45mcmin","padding-top":"0.1much","padding-bottom":"0.1much","padding-left":"0.5mcw","padding-right":"0.5mcw"},"c":[
                 json!({"n":"mono","t":*status,"s":{"color":sc}})
             ]});
             json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.9mcw","width":"100%","padding":"0.45mcw","border-top-width":"1px","border-top-style":"solid","border-top-color":row_line},"c":[
@@ -624,7 +684,7 @@ fn docker_dashboard_scene() -> Value {
                 json!({"n":"mono","t":format!("{:<14}", name),"s":{"color":fg}}),
                 json!({"n":"mono","t":format!("{:<13}", image),"s":{"color":muted}}),
                 cpu_cell,
-                gcell(trend_w, json!({"n":"svg","t":spark,"s":{"width":"5.7mcw","height":"0.7mch"}})),
+                gcell(trend_w, json!({"n":"svg","t":spark,"s":{"width":"5.7mcw","height":"0.7much"}})),
                 gcell(status_w, badge),
                 json!({"n":"mono","t":format!("{:<8}", uptime),"s":{"color":dim}})
             ]})
@@ -637,7 +697,7 @@ fn docker_dashboard_scene() -> Value {
 
     json!({"S":{
         "n":"flex",
-        "s":{"flex-direction":"column","gap":"0.45mch","padding":"1.2mcw","width":"100%","height":"100%","background":editor},
+        "s":{"flex-direction":"column","gap":"0.45much","padding":"1.2mcw","width":"100%","height":"100%","background":editor},
         "c":[header, cards, table]
     }})
 }
@@ -674,8 +734,18 @@ fn diff_review_scene() -> Value {
     // (gutter, kind, sign, code)
     let lines: Vec<(&str, &str, &str, &str)> = vec![
         ("41", "ctx", " ", "fn px_per_col() -> u32 {"),
-        ("42", "del", "-", "    CELL_PX.get().map(|c| c.0).unwrap_or(20)"),
-        ("42", "add", "+", "    CELL_PX.get().map(|c| c.0).unwrap_or(DEFAULT_PX_PER_COL)"),
+        (
+            "42",
+            "del",
+            "-",
+            "    CELL_PX.get().map(|c| c.0).unwrap_or(20)",
+        ),
+        (
+            "42",
+            "add",
+            "+",
+            "    CELL_PX.get().map(|c| c.0).unwrap_or(DEFAULT_PX_PER_COL)",
+        ),
         ("43", "ctx", " ", "}"),
     ];
     let diff_rows: Vec<Value> = lines
@@ -702,7 +772,7 @@ fn diff_review_scene() -> Value {
     // Border colour is derived (color-mix), so it goes through the CSS
     // passthrough longhands rather than the typed `border` (which only takes a
     // plain colour).
-    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.05mch","padding":"0.3mcw","background":editor,"border-radius":"0.45mcmin","border-width":"1px","border-style":"solid","border-color":border},"c":diff_rows});
+    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.05much","padding":"0.3mcw","background":editor,"border-radius":"0.45mcmin","border-width":"1px","border-style":"solid","border-color":border},"c":diff_rows});
 
     // Inline review comment: avatar (with online dot) + shadowed bubble. The
     // dot's ring is the editor background so it reads as cut into the surface.
@@ -712,18 +782,19 @@ fn diff_review_scene() -> Value {
         json!({"n":"text","t":"reviewed 2h ago","s":{"color":muted,"font-size":11,"font-family":sans,"letter-spacing":"0px"}})
     ]});
     let comment_text = json!({"n":"text","t":"Good — a named constant beats a magic number. Ship it.","s":{"color":body,"font-size":13,"font-family":sans,"letter-spacing":"0px"}});
-    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.35mch","padding":"0.75mcw","background":surface2,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"box-shadow":"0 8px 22px #00000055","max-width":"62%"},"c":[author, comment_text]});
+    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.35much","padding":"0.75mcw","background":surface2,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"box-shadow":"0 8px 22px #00000055","max-width":"62%"},"c":[author, comment_text]});
     let comment = json!({"n":"flex","s":{"flex-direction":"row","align-items":"start","gap":"0.77mcw"},"c":[avatar, bubble]});
 
     // The comment floats *over* the diff (a review popover), positioned by a
     // flex overlay inside a stack — anchored near the changed line, its shadow
     // lifting it off the code.
-    let floating = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","height":"100%","justify-content":"flex-start","align-items":"flex-start","padding-top":"2.14mch","padding-left":"6.9mcw"},"c":[comment]});
-    let stack = json!({"n":"stack","s":{"width":"100%","height":"6.55mch"},"c":[diff_box, floating]});
+    let floating = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","height":"100%","justify-content":"flex-start","align-items":"flex-start","padding-top":"2.14much","padding-left":"6.9mcw"},"c":[comment]});
+    let stack =
+        json!({"n":"stack","s":{"width":"100%","height":"6.55much"},"c":[diff_box, floating]});
 
     json!({"S":{
         "n":"flex",
-        "s":{"flex-direction":"column","gap":"0.45mch","padding":"1.4mcw","width":"100%","height":"100%","background":editor},
+        "s":{"flex-direction":"column","gap":"0.45much","padding":"1.4mcw","width":"100%","height":"100%","background":editor},
         "c":[file_header, stack]
     }})
 }
@@ -766,7 +837,13 @@ fn wikipedia_article() -> Demo {
         "c":[title, divider, content]
     }});
 
-    Demo { name: "app_wikipedia", category: "mini-app", cols: 78, rows: 20, scene }
+    Demo {
+        name: "app_wikipedia",
+        category: "mini-app",
+        cols: 78,
+        rows: 20,
+        scene,
+    }
 }
 
 /// An `img` node carrying inline base64 PNG data (Kitty `t=d`).
@@ -811,7 +888,13 @@ fn profile_card() -> Demo {
         "c":[avatar, info]
     }});
 
-    Demo { name: "app_profile_card", category: "mini-app", cols: 34, rows: 6, scene }
+    Demo {
+        name: "app_profile_card",
+        category: "mini-app",
+        cols: 34,
+        rows: 6,
+        scene,
+    }
 }
 
 /// An image gallery: a row of rounded thumbnails of real photographs, each
@@ -862,7 +945,13 @@ fn image_gallery() -> Demo {
         "c":[title, strip]
     }});
 
-    Demo { name: "app_gallery", category: "mini-app", cols: 66, rows: 8, scene }
+    Demo {
+        name: "app_gallery",
+        category: "mini-app",
+        cols: 66,
+        rows: 8,
+        scene,
+    }
 }
 
 /// Sublime-style code panel + minimap. The code is mono text (a terminal
@@ -976,7 +1065,13 @@ fn code_minimap() -> Demo {
         "c":[code_panel, minimap]
     }});
 
-    Demo { name: "app_code_minimap", category: "mini-app", cols: 76, rows: 18, scene }
+    Demo {
+        name: "app_code_minimap",
+        category: "mini-app",
+        cols: 76,
+        rows: 18,
+        scene,
+    }
 }
 
 /// GitHub-style contribution heatmap: a grid of rounded, colour-graded
@@ -1011,7 +1106,8 @@ fn contribution_heatmap() -> Demo {
     legend_row.push(json!({"n":"mono","t":" more","s":{"color":"#7d8590"}}));
     let legend = json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":3},"c":legend_row});
 
-    let title = json!({"n":"mono","t":"1,024 contributions in the last year","s":{"color":"#e6edf3"}});
+    let title =
+        json!({"n":"mono","t":"1,024 contributions in the last year","s":{"color":"#e6edf3"}});
 
     let scene = json!({"S":{
         "n":"flex",
@@ -1019,7 +1115,13 @@ fn contribution_heatmap() -> Demo {
         "c":[title, grid, legend]
     }});
 
-    Demo { name: "app_heatmap", category: "mini-app", cols: 84, rows: 10, scene }
+    Demo {
+        name: "app_heatmap",
+        category: "mini-app",
+        cols: 84,
+        rows: 10,
+        scene,
+    }
 }
 
 /// A bar chart with rounded bars, value-dependent colour, and a baseline.
@@ -1046,7 +1148,13 @@ fn bar_chart() -> Demo {
         "c":[title, chart, baseline]
     }});
 
-    Demo { name: "app_bar_chart", category: "mini-app", cols: 32, rows: 9, scene }
+    Demo {
+        name: "app_bar_chart",
+        category: "mini-app",
+        cols: 32,
+        rows: 9,
+        scene,
+    }
 }
 
 /// A chat thread with rounded message bubbles, incoming left / outgoing
@@ -1088,7 +1196,13 @@ fn chat_bubbles() -> Demo {
         "c":rows
     }});
 
-    Demo { name: "app_chat", category: "mini-app", cols: 40, rows: 10, scene }
+    Demo {
+        name: "app_chat",
+        category: "mini-app",
+        cols: 40,
+        rows: 10,
+        scene,
+    }
 }
 
 #[cfg(test)]

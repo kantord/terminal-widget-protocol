@@ -1,0 +1,51 @@
+# Pre-commit hooks, run via prek (https://github.com/j178/prek) — a fast,
+# Rust-based drop-in for pre-commit. Set up once with `prek install`; thereafter
+# these run on `git commit`. Run everything manually: `prek run --all-files`.
+# Pin/refresh remote hook versions with `prek autoupdate`.
+#
+# Philosophy: fast hooks here, heavy checks (clippy, tests) in CI (.github/workflows).
+repos:
+  # ── Formatting: dprint owns markdown / json / toml (config in dprint.json) ──
+  - repo: local
+    hooks:
+      - id: dprint
+        name: dprint (format md/json/toml)
+        entry: dprint fmt
+        language: system
+        pass_filenames: false
+        files: \.(md|json|toml)$
+
+  # ── Rust: format only (clippy + tests run in CI — too slow per-commit) ──
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --manifest-path twp-proxy/Cargo.toml --all
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+  # ── Spelling (catches prose + code typos) ──
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.29.4
+    hooks:
+      - id: typos
+
+  # ── Markdown semantic lint (formatting is owned by dprint; see config) ──
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.17.2
+    hooks:
+      - id: markdownlint-cli2
+
+  # ── Universal hygiene ──
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+        exclude: \.(md|rs|json|toml)$ # owned by dprint / rustfmt
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: mixed-line-ending
+      - id: check-added-large-files
+        args: [--maxkb=1024]

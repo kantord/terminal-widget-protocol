@@ -1,80 +1,99 @@
 # Terminal Widget Protocol (TWP) — Draft RFC
 
-**Status:** Early proposol, polyfill, no production implementation.
-**Version:** Protocol `v=1` (Phase 1)
+**Status:** Early proposol, polyfill, no production implementation. **Version:**
+Protocol `v=1` (Phase 1)
 
 ---
 
 ## Abstract
 
-The Terminal Widget Protocol (TWP) is an escape-sequence protocol for terminal emulators
-that allows programs to present widgets that precisely fit into the terminal's
-monospace grid, typographic configuration, color scheme, and user-interaction patterns.
+The Terminal Widget Protocol (TWP) is an escape-sequence protocol for terminal
+emulators that allows programs to present widgets that precisely fit into the
+terminal's monospace grid, typographic configuration, color scheme, and
+user-interaction patterns.
 
-TWP allows propgrams to utilize graphical widgets that respect the terminal's particular
-rendering configuration, but can make better use of the space and colors, allowing CLI/TUI
-applications to implement features that would otherwise require a native application or a
-web application.
+TWP allows propgrams to utilize graphical widgets that respect the terminal's
+particular rendering configuration, but can make better use of the space and
+colors, allowing CLI/TUI applications to implement features that would otherwise
+require a native application or a web application.
 
-A declarative, structured format drives the terminal's built-in rendering — and a TWP scene
-can describe slightly more than appearance. Nodes may also carry *semantic intent* that the
-terminal hands to its own accessibility and input handling: marking a run of text as decorative
-so a screen reader skips it, or marking a node as a button so assistive software can announce it
-as a clickable region — while the application still handles the actual click through whatever
-mechanism it already uses. TWP supplies the *meaning*; the terminal and the application keep
-ownership of behavior.
+A declarative, structured format drives the terminal's built-in rendering — and
+a TWP scene can describe slightly more than appearance. Nodes may also carry
+_semantic intent_ that the terminal hands to its own accessibility and input
+handling: marking a run of text as decorative so a screen reader skips it, or
+marking a node as a button so assistive software can announce it as a clickable
+region — while the application still handles the actual click through whatever
+mechanism it already uses. TWP supplies the _meaning_; the terminal and the
+application keep ownership of behavior.
 
-The included experimental polyfill proves the viability of implementing many of TWP's features
-in a separate module, as long as that module has enough information about how the terminal is
-going to render text.
+The included experimental polyfill proves the viability of implementing many of
+TWP's features in a separate module, as long as that module has enough
+information about how the terminal is going to render text.
 
-This RFC is heavily inspired by and actively builds upon the success of pre-existing work
-in this area, especially Kitty's Terminal graphics protocol (https://sw.kovidgoyal.net/kitty/graphics-protocol/), which the polyfill relies on. TWP, however has a structured, text-based format, better 
-suited for user-interfaces because it communicates intent to the terminal - rather than raw pixels - which allows the terminal's renderer to take control of the right details such as monospace cell size
-or color settings.
+This RFC is heavily inspired by and actively builds upon the success of
+pre-existing work in this area, especially Kitty's Terminal graphics protocol
+(https://sw.kovidgoyal.net/kitty/graphics-protocol/), which the polyfill relies
+on. TWP, however has a structured, text-based format, better suited for
+user-interfaces because it communicates intent to the terminal - rather than raw
+pixels - which allows the terminal's renderer to take control of the right
+details such as monospace cell size or color settings.
 
-To understand exactly what TWP is designed to be, it's important to distinguish it from the
-following things:
-- **A document engine**: TWP's nodes do encode information in a structured way, and this structure communicates intent, but it mainly communicates intent on how the terminal's renderer should behave. A hypothetical application could use TWP to display parts of a document, but it would own all aspects of the document format and use TWP to render certain aspects of it.
-- **A web browser**: TWP borrows web technology to avoid reinventing the wheel and facilitate code reuse, but TWP is merely a renderer-agnostic, terminal-shaped way to describe static scenes to rendering engines. In other words, it is more like "a static SVG but for monospace terminal grids".
-- **A TUI/GUI/CLI toolkit**: TWP does not own any aspects of such a toolkit, but it could empower existing TUI/CLI toolkits more freedom in what they ask the terminal to render.
+To understand exactly what TWP is designed to be, it's important to distinguish
+it from the following things:
 
-TWP lets applications express layouts in monospace cells, which means that layouts can be measured
-in characters, and making them line up with "raw text" is a matter of counting characters. Typography is inherited from the terminal, and so is the color scheme. However, TWP widgets can derive adjusted colors form the built-in terminal colors, thus allowing for more legible text and cleaner structure while also fitting neatly into the user's theme.
+- **A document engine**: TWP's nodes do encode information in a structured way,
+  and this structure communicates intent, but it mainly communicates intent on
+  how the terminal's renderer should behave. A hypothetical application could
+  use TWP to display parts of a document, but it would own all aspects of the
+  document format and use TWP to render certain aspects of it.
+- **A web browser**: TWP borrows web technology to avoid reinventing the wheel
+  and facilitate code reuse, but TWP is merely a renderer-agnostic,
+  terminal-shaped way to describe static scenes to rendering engines. In other
+  words, it is more like "a static SVG but for monospace terminal grids".
+- **A TUI/GUI/CLI toolkit**: TWP does not own any aspects of such a toolkit, but
+  it could empower existing TUI/CLI toolkits more freedom in what they ask the
+  terminal to render.
+
+TWP lets applications express layouts in monospace cells, which means that
+layouts can be measured in characters, and making them line up with "raw text"
+is a matter of counting characters. Typography is inherited from the terminal,
+and so is the color scheme. However, TWP widgets can derive adjusted colors form
+the built-in terminal colors, thus allowing for more legible text and cleaner
+structure while also fitting neatly into the user's theme.
 
 TWP is transport-framed with the standard ECMA-48 APC mechanism, so terminals
 that do not implement it silently ignore TWP messages.
 
 The implementation bundled with this document is a **polyfill** (§3.2): it makes
-TWP work on the Kitty terminal and allows experimenting with the protocol, but it is
-not production-ready, not a 100% correct implementation of the protocol and is largely 
-vibe-coded for testing and demonstration purposes, so you should only use it at your own risk, and
-at the cost of your own patience. 
+TWP work on the Kitty terminal and allows experimenting with the protocol, but
+it is not production-ready, not a 100% correct implementation of the protocol
+and is largely vibe-coded for testing and demonstration purposes, so you should
+only use it at your own risk, and at the cost of your own patience.
 
 ---
 
 ## Status of This Document
 
 This is a **proposal**, open for comments — a "request for comments" in the
-literal sense, *not* an IETF RFC. A few things follow from that, and they are
+literal sense, _not_ an IETF RFC. A few things follow from that, and they are
 stated plainly here so there is no confusion about the document's standing:
 
 1. **It is a living document.** It will change in response to feedback and
    implementation experience. Section numbers, key names, and exact spellings
-   are not yet stable (§ markers are cross-references within *this* revision).
+   are not yet stable (§ markers are cross-references within _this_ revision).
 
 2. **There is no formal approval body or process.** No standards organization or
-   working group governs terminal-extension protocols, and this document does not
-   seek ratification from one. The nearest formal standard, ECMA-48 (the APC
+   working group governs terminal-extension protocols, and this document does
+   not seek ratification from one. The nearest formal standard, ECMA-48 (the APC
    framing TWP rides on), is long settled and not being extended; there is no
    committee that "accepts" a new sequence. No version of this document becomes
    official by decree.
 
-3. **If TWP becomes a standard, it will be a *de facto* one** — established the
+3. **If TWP becomes a standard, it will be a _de facto_ one** — established the
    way the Kitty graphics protocol and OSC 8 hyperlinks were: a clear, public
    specification plus a working reference implementation, adopted because it is
-   useful enough that terminal emulators (and the libraries and applications that
-   target them) choose to implement it. **Its reality depends entirely on
+   useful enough that terminal emulators (and the libraries and applications
+   that target them) choose to implement it. **Its reality depends entirely on
    terminal emulators implementing it** — nothing in this document is binding
    until they do.
 
@@ -89,9 +108,9 @@ The intended path, in clean steps:
    pipelines (§3.3) — the milestone that makes it real.
 5. **Convergence**: as implementations agree, the document stabilizes into a de
    facto standard. Compatibility is tracked by the protocol version (`v`);
-   backward-incompatible changes bump it, additive changes rely on the
-   "unknown ⇒ ignore" rule (§10). Stability comes from agreement among
-   implementations, not from a stamp.
+   backward-incompatible changes bump it, additive changes rely on the "unknown
+   ⇒ ignore" rule (§10). Stability comes from agreement among implementations,
+   not from a stamp.
 
 Comments, issues, and competing proposals are welcome in the project's public
 repository.
@@ -102,15 +121,15 @@ repository.
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD",
 "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this
-document are to be interpreted as described in BCP 14 [RFC 2119] [RFC 8174] when,
-and only when, they appear in all capitals, as shown here.
+document are to be interpreted as described in BCP 14 [RFC 2119] [RFC 8174]
+when, and only when, they appear in all capitals, as shown here.
 
 - **Renderer** — the component that interprets TWP messages, lays out the scene,
   rasterizes it, and displays it. May be a terminal itself (§3.3) or a separate
   process (§3.2).
 - **Sender** — the application emitting TWP messages.
-- **Cell** — one character cell of the terminal grid; `px_per_col` × `px_per_row`
-  pixels, anisotropic and terminal-dependent (§7.3).
+- **Cell** — one character cell of the terminal grid; `px_per_col` ×
+  `px_per_row` pixels, anisotropic and terminal-dependent (§7.3).
 - **Scene** — the root widget tree of a TWP message.
 - **KGP** — the Kitty graphics protocol. TWP does not depend on it; it is merely
   the display backend the bundled polyfill (§3.2) happens to use. A native
@@ -118,7 +137,7 @@ and only when, they appear in all capitals, as shown here.
 
 **A note on the examples in this document.** For readability, JSON throughout
 this document is shown **pretty-printed** (indented, multi-line) and often as a
-bare fragment. This is *not* the wire form. On the wire the payload MUST be a
+bare fragment. This is _not_ the wire form. On the wire the payload MUST be a
 **single-line, compact JSON document wrapped in the full envelope** —
 `ESC _ twp;v=1,c=…,r=… ; {…} ESC \` (§4). The formatted examples are
 illustrative only; a real sender always emits the framed, single-line form.
@@ -128,7 +147,7 @@ illustrative only; a real sender always emits the framed, single-line form.
 ## 1. Motivation
 
 The problem TWP addresses is **not** that terminals can't draw graphics — they
-can. It is that drawing them *well* — integrated with the terminal's own
+can. It is that drawing them _well_ — integrated with the terminal's own
 rendering, consistent with its fonts, grid, and theme, and cooperating with
 features like text selection and accessibility — is hard, and the entity best
 placed to do it (the terminal itself) is never given a description it can work
@@ -141,9 +160,9 @@ hard problem extremely well: getting arbitrary bitmaps onto the screen, anchored
 to the cell grid. By design they operate at the **pixel layer** — the sender
 renders the final image and the terminal displays it. TWP is not an alternative
 to them; it adds a **complementary layer above** them. Because a transmitted
-image is final pixels, the terminal renders it as-is and the content within it is
-not something the terminal can reflow, re-theme, make selectable, or expose to
-accessibility tooling — not a limitation of those protocols, but simply a
+image is final pixels, the terminal renders it as-is and the content within it
+is not something the terminal can reflow, re-theme, make selectable, or expose
+to accessibility tooling — not a limitation of those protocols, but simply a
 consequence of operating at the pixel layer. TWP describes content at a higher
 level so the terminal can take part in rendering it.
 
@@ -156,8 +175,8 @@ externally, the things the terminal already does well:
   with the user's exact font, size, hinting, and metrics. Reproducing that
   outside the terminal, so widget text matches terminal text, is genuinely
   difficult to get exactly right.
-- **The layout grid.** Aligning external graphics to the cell grid depends on the
-  live, per-terminal cell pixel size, and needs care to stay aligned across
+- **The layout grid.** Aligning external graphics to the cell grid depends on
+  the live, per-terminal cell pixel size, and needs care to stay aligned across
   font/DPI changes (what TWP's cell units handle; §7.3).
 - **The color theme.** Matching the user's terminal color scheme requires
   discovering and tracking the palette; without it, a widget's colors are chosen
@@ -169,58 +188,58 @@ externally, the things the terminal already does well:
 A terminal that renders a TWP **description** can reuse all of this directly,
 because it owns the font stack, the grid, the palette, and the screen model: the
 same widget text can be real, selectable, accessible text, and the colors are
-*the user's* colors. (The bundled polyfill, being external, necessarily
+_the user's_ colors. (The bundled polyfill, being external, necessarily
 reproduces some of these itself and accepts the resulting imperfections — which
 is exactly why native integration is the intended implementation; §3.3.)
 
 ### 1.3 A declarative layer is the enabler
 
-For the terminal to do the rendering, it needs to be told *what* to show, not
+For the terminal to do the rendering, it needs to be told _what_ to show, not
 handed pixels. So TWP is a **declarative** description — a widget tree with
 flexbox layout, styled text, and graphics — that the renderer lays out and draws
 itself. Declarativeness is not the goal; it is the mechanism that lets the
 terminal own the rendering and thereby deliver the integration in §1.2. (It also
-means there is no single "correct" rendering to ship: the same scene can be drawn
-to match each terminal.)
+means there is no single "correct" rendering to ship: the same scene can be
+drawn to match each terminal.)
 
 ### 1.4 Web technology is a natural fit for theming a small palette
 
 The styling model borrows deliberately from the web, because the web has already
-solved the problem TWP faces: making a coherent design out of a *small* set of
-colors. **Design tokens** and **color blending** (`color-mix()`, relative colors)
-let a whole UI derive every shade from a handful of base colors — exactly the
-terminal situation, where the base set is the user's ~16-color palette. Borrowing
-this (§8) means a widget can compute tints, muted text, and elevated surfaces
-from `term(...)` values and look good against *any* theme, light or dark, with no
-per-theme code — rather than hardcoding colors that clash with half of users'
-setups.
+solved the problem TWP faces: making a coherent design out of a _small_ set of
+colors. **Design tokens** and **color blending** (`color-mix()`, relative
+colors) let a whole UI derive every shade from a handful of base colors —
+exactly the terminal situation, where the base set is the user's ~16-color
+palette. Borrowing this (§8) means a widget can compute tints, muted text, and
+elevated surfaces from `term(...)` values and look good against _any_ theme,
+light or dark, with no per-theme code — rather than hardcoding colors that clash
+with half of users' setups.
 
 ### 1.5 A substrate for the rich-terminal-app surge
 
 Finally, TWP aims to be a good **low-level toolkit that CLI/TUI frameworks can
 build on**, not an end-user format. There is intense and growing interest in
-richer, more interactive terminal applications — dashboards, TUIs, and
-notably the wave of **AI agent** tools that live in the terminal and want to
-present structured, visual output. These frameworks should not each reinvent a
-renderer, a theming system, and a layout engine. A shared declarative primitive
-underneath them — one the terminal can render natively — lets that ecosystem
-focus on the application, not the pixels.
+richer, more interactive terminal applications — dashboards, TUIs, and notably
+the wave of **AI agent** tools that live in the terminal and want to present
+structured, visual output. These frameworks should not each reinvent a renderer,
+a theming system, and a layout engine. A shared declarative primitive underneath
+them — one the terminal can render natively — lets that ecosystem focus on the
+application, not the pixels.
 
 ### 1.6 Why now
 
 Smooth, anti-aliased software rendering with real fonts is cheap and works over
-SSH with no GPU. The Kitty graphics protocol established a portable way to anchor
-pixels to the cell grid, and the Kitty text-sizing protocol showed terminals will
-accept richer text geometry. The remaining missing piece is the declarative
-vocabulary — which is what this document specifies.
+SSH with no GPU. The Kitty graphics protocol established a portable way to
+anchor pixels to the cell grid, and the Kitty text-sizing protocol showed
+terminals will accept richer text geometry. The remaining missing piece is the
+declarative vocabulary — which is what this document specifies.
 
 ---
 
 ## 2. Design Goals & Non-Goals
 
-**Goals**
+### Goals
 
-- **Declarative.** Senders describe *what* to show, not *how* to draw it.
+- **Declarative.** Senders describe _what_ to show, not _how_ to draw it.
 - **Cell-native.** Layout aligns to the character grid on any terminal.
 - **Theme-reactive.** Color can derive from the terminal palette.
 - **Degrade safely.** Unaware terminals ignore TWP; unknown features within a
@@ -230,24 +249,25 @@ vocabulary — which is what this document specifies.
   bundled polyfill reuses the Kitty graphics protocol, a native renderer paints
   directly.
 - **Native-first, polyfillable today.** The intended implementation wires TWP
-  into a terminal's *existing* rendering pipeline (§3.3). The bundled polyfill
-  (§3.2) makes it work *now* on any Kitty-graphics-capable terminal, so the
+  into a terminal's _existing_ rendering pipeline (§3.3). The bundled polyfill
+  (§3.2) makes it work _now_ on any Kitty-graphics-capable terminal, so the
   protocol can be used and evaluated before any terminal adopts it.
 - **Respect accessibility.** This document does **not** yet offer a mature
   accessibility model — that is acknowledged future work (§13), and a mature
-  model will most likely emerge only *after* the protocol has been implemented
+  model will most likely emerge only _after_ the protocol has been implemented
   and used in practice, the same way its other open tradeoffs will (§3.4).
-  Accessibility is nonetheless an explicit goal at three levels: (1) **do no harm** — TWP MUST NOT degrade
-  the accessibility a terminal already provides; (2) **handle the easy wins the
-  proposal itself creates** — because a scene carries real text (`text` / `mono`
-  nodes) rather than only pixels, a native renderer can keep that text selectable
-  and exposed to assistive technology instead of flattening it into an
-  unreadable image; and (3) **be a substrate for future accessibility** — the
-  declarative tree is the natural place to later attach semantic roles, labels,
-  and alternative text. (The bundled polyfill, rendering to images, does not yet
-  realize level 2; only native integration does — §3.3.)
+  Accessibility is nonetheless an explicit goal at three levels: (1) **do no
+  harm** — TWP MUST NOT degrade the accessibility a terminal already provides;
+  (2) **handle the easy wins the proposal itself creates** — because a scene
+  carries real text (`text` / `mono` nodes) rather than only pixels, a native
+  renderer can keep that text selectable and exposed to assistive technology
+  instead of flattening it into an unreadable image; and (3) **be a substrate
+  for future accessibility** — the declarative tree is the natural place to
+  later attach semantic roles, labels, and alternative text. (The bundled
+  polyfill, rendering to images, does not yet realize level 2; only native
+  integration does — §3.3.)
 
-**Non-Goals (Phase 1)**
+### Non-Goals (Phase 1)
 
 - **Not a browser, document engine, or styling language for the terminal.** The
   node and style vocabulary is deliberately small and bounded (§5–§8); there is
@@ -259,12 +279,12 @@ vocabulary — which is what this document specifies.
 - **No renderer-owned animation** in this first iteration: there is no keyframe
   or timeline model that the renderer drives. An application updates or animates
   a widget by **re-sending a TWP message to the same screen region** — the
-  renderer replaces the prior rendering there. Motion is therefore *application-
-  driven*, frame by frame. (Each scene is static; CSS/SVG animation is neither
+  renderer replaces the prior rendering there. Motion is therefore _application-
+  driven_, frame by frame. (Each scene is static; CSS/SVG animation is neither
   required nor precluded, but is not specified here. Renderer-owned animation is
   noted as possible future work, §13.)
 - Not a replacement for the Kitty graphics protocol; it operates at a different
-  layer (the polyfill happens to *use* KGP to display).
+  layer (the polyfill happens to _use_ KGP to display).
 - No interactivity/hit-testing in Phase 1 (see §13, Future Work).
 
 ---
@@ -273,18 +293,18 @@ vocabulary — which is what this document specifies.
 
 ### 3.1 The model
 
-```
-   sender                      renderer                         display
-  ┌───────────┐   APC + JSON  ┌──────────────────────┐        ┌─────────┐
-  │  TUI/CLI  │ ────────────► │  parse → resolve →    │ ─────► │  screen │
-  │           │   twp;…;{…}   │  lay out → rasterize  │ pixels │         │
-  └───────────┘               └──────────────────────┘        └─────────┘
+```text
+ sender                      renderer                         display
+┌───────────┐   APC + JSON  ┌──────────────────────┐        ┌─────────┐
+│  TUI/CLI  │ ────────────► │  parse → resolve →    │ ─────► │  screen │
+│           │   twp;…;{…}   │  lay out → rasterize  │ pixels │         │
+└───────────┘               └──────────────────────┘        └─────────┘
 ```
 
 A **renderer** intercepts TWP escape sequences in the byte stream, lays out and
 rasterizes the scene to a bitmap, and displays it, having resolved cell units
 against the cell pixel size and `term(...)` colors against the active palette
-(§7, §8). *How* the renderer is embedded — as a separate process or inside the
+(§7, §8). _How_ the renderer is embedded — as a separate process or inside the
 terminal — is an implementation choice, discussed next. Nothing in §4–§10 (the
 wire format and semantics) depends on that choice.
 
@@ -292,7 +312,7 @@ wire format and semantics) depends on that choice.
 
 The implementation in this repository, `twp-proxy`, is a **polyfill**: a
 deliberately simple reference renderer built quickly and pragmatically to prove
-the protocol *from the application's side*. It is a PTY proxy — it sits between
+the protocol _from the application's side_. It is a PTY proxy — it sits between
 an application and a Kitty-graphics-capable terminal, intercepts TWP sequences,
 renders each scene to a PNG, transmits it via the Kitty graphics protocol with
 Unicode placeholders, and emits a `c×r` placeholder-cell grid where the widget
@@ -300,26 +320,26 @@ appears (§9). It queries the terminal for the cell size and palette it needs.
 
 Its job is to let people **use and evaluate TWP today**, on terminals that have
 never heard of it. It is explicitly **not normative**: nothing about its
-architecture (an out-of-band rasterizer, a specific graphics-protocol backend,
-a particular CSS/SVG engine) is prescribed by this document, and it is not
+architecture (an out-of-band rasterizer, a specific graphics-protocol backend, a
+particular CSS/SVG engine) is prescribed by this document, and it is not
 optimized for production. Treat it as a working sketch of the protocol's
-*behavior*, not a specification of how a terminal should implement it.
+_behavior_, not a specification of how a terminal should implement it.
 
 ### 3.3 The intended implementation: native integration
 
-Where a terminal is able to, the intended implementation is to wire TWP
-**into the terminal's existing rendering pipeline** rather than bolting a
-separate renderer alongside it. A terminal already has the things the polyfill
-has to acquire awkwardly from outside — the live cell metrics, the active
-palette, the font stack, a glyph rasterizer and compositor, and authoritative
-control over the cell grid. Reusing them avoids the polyfill's seams
-(out-of-band queries, the placeholder-image display path, the
-text/widget coexistence limits noted in §9) and lets widgets composite with the
-rest of the screen as first-class content.
+Where a terminal is able to, the intended implementation is to wire TWP **into
+the terminal's existing rendering pipeline** rather than bolting a separate
+renderer alongside it. A terminal already has the things the polyfill has to
+acquire awkwardly from outside — the live cell metrics, the active palette, the
+font stack, a glyph rasterizer and compositor, and authoritative control over
+the cell grid. Reusing them avoids the polyfill's seams (out-of-band queries,
+the placeholder-image display path, the text/widget coexistence limits noted in
+§9) and lets widgets composite with the rest of the screen as first-class
+content.
 
 Such a terminal need not use the Kitty graphics protocol at all internally; it
-can lay out and paint a TWP scene directly. The wire format and semantics (§4–§8)
-are identical regardless.
+can lay out and paint a TWP scene directly. The wire format and semantics
+(§4–§8) are identical regardless.
 
 ### 3.4 Both are valid; the right tradeoff is not yet known
 
@@ -333,9 +353,9 @@ We are explicit that the ideal tradeoff is **genuinely unknown today**. It will
 become clear only once TWP is used in practice and observed inside specific
 terminal applications — how scenes are actually authored, how large and how
 frequent they are, how they interact with scrollback, reflow, and selection, and
-where the polyfill's seams hurt versus where they are immaterial. The protocol is
-specified so that *either* strategy is conformant; choosing between them is left
-to implementers and to experience.
+where the polyfill's seams hurt versus where they are immaterial. The protocol
+is specified so that _either_ strategy is conformant; choosing between them is
+left to implementers and to experience.
 
 ---
 
@@ -345,7 +365,7 @@ to implementers and to experience.
 
 A TWP message is a single ECMA-48 **Application Program Command (APC)**:
 
-```
+```text
 ESC _  twp;<header>;<payload>  ESC \
 ```
 
@@ -360,16 +380,16 @@ ESC _  twp;<header>;<payload>  ESC \
   accepted.
 
 Because APC content is opaque to the terminal, a terminal that does not
-implement TWP swallows the entire sequence and displays nothing — TWP's
-baseline graceful-degradation property.
+implement TWP swallows the entire sequence and displays nothing — TWP's baseline
+graceful-degradation property.
 
 ### 4.2 Header fields
 
-| Key | Meaning | Required |
-|-----|---------|----------|
-| `v` | Protocol version. This document specifies `v=1`. | yes |
-| `c` | Cell **columns** the widget occupies. | yes |
-| `r` | Cell **rows** the widget occupies. | yes |
+| Key | Meaning                                          | Required |
+| --- | ------------------------------------------------ | -------- |
+| `v` | Protocol version. This document specifies `v=1`. | yes      |
+| `c` | Cell **columns** the widget occupies.            | yes      |
+| `r` | Cell **rows** the widget occupies.               | yes      |
 
 Unknown header keys MUST be ignored (forward-compatibility). A renderer that
 does not support the declared `v` MUST ignore the message.
@@ -388,9 +408,9 @@ raw `ESC` — so it rides the APC channel verbatim with no further encoding.
 
 Top-level keys:
 
-| Key | Meaning |
-|-----|---------|
-| `S` | **Scene** — the root node of the widget tree (§5). |
+| Key | Meaning                                                             |
+| --- | ------------------------------------------------------------------- |
+| `S` | **Scene** — the root node of the widget tree (§5).                  |
 | `C` | **Components** — a map of `name → node` definitions for reuse (§6). |
 
 Both are optional; a payload with neither is a no-op. A payload with only `C`
@@ -398,7 +418,7 @@ registers definitions (renderers MAY treat definitions as per-message).
 
 Minimal example (full message):
 
-```
+```text
 ESC _ twp;v=1,c=8,r=1;{"S":{"n":"mono","t":"hello"}} ESC \
 ```
 
@@ -412,14 +432,14 @@ A **node** is a JSON object:
 { "n": "<type>", "s": { …style… }, "c": [ …children… ], "t": "<text>" }
 ```
 
-| Field | Meaning |
-|-------|---------|
-| `n` | Node type (below). Required. |
-| `s` | Style object (§7, §8). Optional. |
-| `c` | Array of child nodes. Optional. |
-| `t` | Text/source content; meaning depends on type. Optional. |
-| `img` | Image source, for `img` nodes (§5.6). Optional. |
-| `name`, `props` | Component machinery (§6). Optional. |
+| Field           | Meaning                                                 |
+| --------------- | ------------------------------------------------------- |
+| `n`             | Node type (below). Required.                            |
+| `s`             | Style object (§7, §8). Optional.                        |
+| `c`             | Array of child nodes. Optional.                         |
+| `t`             | Text/source content; meaning depends on type. Optional. |
+| `img`           | Image source, for `img` nodes (§5.6). Optional.         |
+| `name`, `props` | Component machinery (§6). Optional.                     |
 
 ### 5.1 `flex` — flex container
 
@@ -435,7 +455,7 @@ dots — anything that is "a rectangle with style."
 ### 5.3 `text` — proportional text
 
 A run of text (`t`) rendered in a **proportional** font at `font-size`. For
-prose, headings, captions — content that is *not* meant to align to the cell
+prose, headings, captions — content that is _not_ meant to align to the cell
 grid.
 
 ### 5.4 `mono` — monospace-grid text
@@ -462,13 +482,13 @@ An `img` node carries an `img` object describing a bitmap, with keys
 intentionally mirroring the Kitty graphics protocol so the same source
 description is portable:
 
-| Key | Meaning |
-|-----|---------|
-| `f` | Format: `100` = encoded (PNG, default), `32` = RGBA, `24` = RGB. |
-| `t` | Transmission: `"d"` = direct base64 in `d`; `"f"` = file at `path`. |
-| `s`, `v` | Pixel width / height (required for raw `f=32`/`f=24`). |
-| `d` | Base64 payload. |
-| `path` | Filesystem path (for `t=f`). |
+| Key      | Meaning                                                             |
+| -------- | ------------------------------------------------------------------- |
+| `f`      | Format: `100` = encoded (PNG, default), `32` = RGBA, `24` = RGB.    |
+| `t`      | Transmission: `"d"` = direct base64 in `d`; `"f"` = file at `path`. |
+| `s`, `v` | Pixel width / height (required for raw `f=32`/`f=24`).              |
+| `d`      | Base64 payload.                                                     |
+| `path`   | Filesystem path (for `t=f`).                                        |
 
 The node's `border-radius` clips the image (e.g. circular avatars).
 
@@ -524,27 +544,28 @@ likewise.
 
 A length is either a bare number (**pixels**) or a string with a unit:
 
-| Form | Unit | Resolves to |
-|------|------|-------------|
-| `42` | pixels | `42px` (escape hatch for sub-cell cosmetics) |
-| `"50%"` | percent | 50% of the parent's corresponding axis |
-| `"3mcw"` | monospace **cell width** (x) | `3 · px_per_col` |
-| `"2mch"` | monospace **cell height** (y) | `2 · px_per_row` |
-| `"1mcmin"` | cell **min** | `1 · min(px_per_col, px_per_row)` |
-| `"1mcmax"` | cell **max** | `1 · max(px_per_col, px_per_row)` |
+| Form       | Unit                          | Resolves to                                  |
+| ---------- | ----------------------------- | -------------------------------------------- |
+| `42`       | pixels                        | `42px` (escape hatch for sub-cell cosmetics) |
+| `"50%"`    | percent                       | 50% of the parent's corresponding axis       |
+| `"3mcw"`   | monospace **cell width** (x)  | `3 · px_per_col`                             |
+| `"2much"`  | monospace **cell height** (y) | `2 · px_per_row`                             |
+| `"1mcmin"` | cell **min**                  | `1 · min(px_per_col, px_per_row)`            |
+| `"1mcmax"` | cell **max**                  | `1 · max(px_per_col, px_per_row)`            |
 
 **Cell units are TWP's native length unit and the key to portability.** The
-character cell is *anisotropic* (typically ~1:2, taller than wide) and its pixel
+character cell is _anisotropic_ (typically ~1:2, taller than wide) and its pixel
 size varies per terminal (font, size, DPI). A widget sized in pixels aligns to
 the grid only on the terminal it was authored on; a widget sized in cell units
-aligns *everywhere*, because the renderer resolves `mcw`/`mch` against the live,
-per-terminal cell size.
+aligns _everywhere_, because the renderer resolves `mcw`/`much` against the
+live, per-terminal cell size.
 
-Because the two axes are independent, there are two base units (`mcw`, `mch`).
-For elements that must be *square in pixels* despite the anisotropic cell —
+Because the two axes are independent, there are two base units (`mcw`, `much`).
+For elements that must be _square in pixels_ despite the anisotropic cell —
 icons, status dots, circular avatars — `mcmin` gives the largest square that
-*fits* within a cell (like `object-fit: contain`) and `mcmax` the smallest that
-*covers* it (like `cover`). `N·mcmin` scales those square graphics with the grid.
+_fits_ within a cell (like `object-fit: contain`) and `mcmax` the smallest that
+_covers_ it (like `cover`). `N·mcmin` scales those square graphics with the
+grid.
 
 Guidance: use cell units for layout (columns, gaps, padding, bars) and for SVG
 node boxes (the SVG `viewBox` preserves internal proportion); use `mcmin` for
@@ -555,10 +576,10 @@ border).
 
 On `mono` nodes (mirroring the Kitty text-sizing protocol):
 
-| Key | Meaning |
-|-----|---------|
-| `scale` | Each glyph occupies a `scale × scale` block of cells. |
-| `char-width` | Cells per glyph horizontally. |
+| Key                         | Meaning                                                    |
+| --------------------------- | ---------------------------------------------------------- |
+| `scale`                     | Each glyph occupies a `scale × scale` block of cells.      |
+| `char-width`                | Cells per glyph horizontally.                              |
 | `subscale-n` / `subscale-d` | Glyph drawn at `n/d` of the cell block (a finer sub-grid). |
 
 ### 7.5 The passthrough rule
@@ -585,29 +606,29 @@ transparent background composites the widget over the terminal cells beneath it.
 
 ### 8.2 Terminal palette — `term(...)`
 
-`term(...)` draws from the terminal's *own* color scheme:
+`term(...)` draws from the terminal's _own_ color scheme:
 
-| Form | Meaning |
-|------|---------|
-| `term(fg)` | Default foreground. |
-| `term(bg)` | Default background. |
-| `term(0)` … `term(15)` | The 16 ANSI palette colors (theme-dependent). |
+| Form                     | Meaning                                              |
+| ------------------------ | ---------------------------------------------------- |
+| `term(fg)`               | Default foreground.                                  |
+| `term(bg)`               | Default background.                                  |
+| `term(0)` … `term(15)`   | The 16 ANSI palette colors (theme-dependent).        |
 | `term(16)` … `term(255)` | The 256-color cube / grayscale ramp (fixed formula). |
 
-The renderer learns the palette by querying the terminal (the polyfill
-uses OSC 4 / OSC 10 / OSC 11). Because indices 0–15 are theme-defined,
-`term(2)` is "this user's green," not a fixed RGB — so a widget built on
-`term(...)` adopts the user's color scheme automatically.
+The renderer learns the palette by querying the terminal (the polyfill uses OSC
+4 / OSC 10 / OSC 11). Because indices 0–15 are theme-defined, `term(2)` is "this
+user's green," not a fixed RGB — so a widget built on `term(...)` adopts the
+user's color scheme automatically.
 
 ### 8.3 Derived colors
 
 Standard CSS color functions are accepted, most usefully `color-mix()`:
 
-```
+```text
 color-mix(in srgb, term(2) 15%, term(bg))
 ```
 
-This expresses *derived* theme tones — an "added line" tint as the green accent
+This expresses _derived_ theme tones — an "added line" tint as the green accent
 mixed lightly into the background, "muted" text as the foreground pulled toward
 the background, elevated surfaces as subtle lifts off `term(bg)`. A complete UI
 can thus derive **every** color from the palette and re-tone itself to any
@@ -631,22 +652,22 @@ A renderer processes a TWP message as:
 3. **Lay out and rasterize** the scene into a bitmap sized to `c × r` cells.
 4. **Display** the bitmap anchored to a `c × r` block of character cells.
 
-The polyfill implements step 4 with the **Kitty graphics protocol using
-Unicode placeholders**: it transmits the image (`a=T,f=100,U=1,c=…,r=…`) and
-emits a `c × r` grid of `U+10EEEE` placeholder cells (image id encoded in the
-cell foreground color, row/column via combining diacritics). The terminal paints
-the transmitted image into exactly those cells. A native implementation may use
-any equivalent mechanism.
+The polyfill implements step 4 with the **Kitty graphics protocol using Unicode
+placeholders**: it transmits the image (`a=T,f=100,U=1,c=…,r=…`) and emits a
+`c × r` grid of `U+10EEEE` placeholder cells (image id encoded in the cell
+foreground color, row/column via combining diacritics). The terminal paints the
+transmitted image into exactly those cells. A native implementation may use any
+equivalent mechanism.
 
 **Cell footprint.** The widget occupies exactly the `c × r` cells declared in
 the header. Sizing the scene root to `width:100%; height:100%` fills that box;
 the cell-unit system (§7.3) ensures internal elements align to the same grid.
 
-**Coexistence (informative).** In the polyfill, a placeholder-image
-widget and ordinary printed text do not currently share the same screen region
-cleanly; widgets are best placed in regions the application manages as widget
-real estate. A tighter cell-by-cell coexistence model (analogous to
-`ratatui-image`) is future work (§11).
+**Coexistence (informative).** In the polyfill, a placeholder-image widget and
+ordinary printed text do not currently share the same screen region cleanly;
+widgets are best placed in regions the application manages as widget real
+estate. A tighter cell-by-cell coexistence model (analogous to
+`ratatouille-image`) is future work (§11).
 
 ---
 
@@ -656,7 +677,7 @@ TWP degrades at three levels:
 
 1. **Wrapper-unaware terminal.** Any terminal that does not implement TWP
    swallows the APC (standard ECMA-48 behavior) and shows nothing. (An optional
-   sender-supplied plain-text rendering printed *outside* the APC could let such
+   sender-supplied plain-text rendering printed _outside_ the APC could let such
    terminals show a fallback; see §11.)
 2. **Unknown node type.** Rendered as nothing; the rest of the scene renders
    (§5.8).
@@ -664,7 +685,7 @@ TWP degrades at three levels:
    (§7.5).
 
 **Versioning.** `v=1` identifies this protocol revision. Renderers MUST ignore
-messages whose `v` they do not support. New *additive* features (node types,
+messages whose `v` they do not support. New _additive_ features (node types,
 style properties, header keys) do not require a version bump because each
 degrades individually; `v` increments only on incompatible changes.
 
@@ -696,7 +717,7 @@ forward-compatibility story and applies uniformly at every layer.
 
 ## 12. Relationship to Prior Art
 
-- **Kitty graphics protocol.** Conceptually the layer *below* TWP — the
+- **Kitty graphics protocol.** Conceptually the layer _below_ TWP — the
   imperative pixel layer, where TWP is a declarative description above it. The
   bundled polyfill uses it as its display backend, but TWP does not require it;
   `img` source keys deliberately mirror it for portability.
@@ -707,8 +728,8 @@ forward-compatibility story and applies uniformly at every layer.
 - **CSS / flexbox / SVG.** TWP's style and layout semantics are intentionally a
   subset of CSS, so the model is familiar and the passthrough rule (§7.5) can
   borrow the rasterizer's full CSS engine.
-- **TUI frameworks (ratatui, etc.).** TWP is complementary: a TUI could emit a
-  TWP scene for a region instead of (or alongside) cell characters, gaining
+- **TUI frameworks (ratatouille, etc.).** TWP is complementary: a TUI could emit
+  a TWP scene for a region instead of (or alongside) cell characters, gaining
   sub-cell rendering while keeping the cell grid as the coordinate system.
 
 ---
@@ -736,16 +757,16 @@ forward-compatibility story and applies uniformly at every layer.
   TWP `v`, and which features?" so senders can choose between a TWP rendering
   and a degraded one without guessing.
 - **Generalized envelope (note).** TWP frames on plain APC like its peers. The
-  framing/encoding/dispatch concerns *could* be factored into a shared
-  envelope reused by multiple terminal-extension sub-protocols; this is recorded
-  as a possibility, not proposed here — its value depends on multi-protocol
-  adoption that TWP alone does not require.
+  framing/encoding/dispatch concerns _could_ be factored into a shared envelope
+  reused by multiple terminal-extension sub-protocols; this is recorded as a
+  possibility, not proposed here — its value depends on multi-protocol adoption
+  that TWP alone does not require.
 
 ---
 
 ## References
 
-**Normative**
+### Normative
 
 - **[RFC 2119]** Bradner, S., "Key words for use in RFCs to Indicate Requirement
   Levels", BCP 14, RFC 2119, March 1997.
@@ -754,13 +775,14 @@ forward-compatibility story and applies uniformly at every layer.
 - **[ECMA-48]** ECMA-48, "Control Functions for Coded Character Sets" (= ISO/IEC
   6429), 5th edition — the APC / string-control-sequence framing TWP rides on.
 
-**Informative**
+### Informative
 
 - **[KGP]** Kitty Graphics Protocol — the display backend used by the bundled
   polyfill (not part of TWP itself), including Unicode placeholders.
   <https://sw.kovidgoyal.net/kitty/graphics-protocol/>
 - **[OSC 66]** Kitty Text-Sizing Protocol — basis for `mono` `scale` /
-  `char-width` / `subscale`. <https://sw.kovidgoyal.net/kitty/text-sizing-protocol/>
+  `char-width` / `subscale`.
+  <https://sw.kovidgoyal.net/kitty/text-sizing-protocol/>
 - **[OSC 8]** Hyperlinks in terminal emulators (Egmont Koblinger et al.) — prior
   art for a community-published, adopted-by-reference terminal extension.
 - **CSS** — Flexbox, color, and `color-mix()` semantics that TWP's style
@@ -773,31 +795,76 @@ forward-compatibility story and applies uniformly at every layer.
 **A.1 A themed status pill (cell-native, theme-derived):**
 
 ```json
-{"S":{"n":"flex","s":{"justify-content":"center","align-items":"center",
-  "width":"100%","height":"100%","background":"term(bg)"},
- "c":[{"n":"flex","s":{"background":"color-mix(in srgb, term(2) 18%, term(bg))",
-   "border-radius":"0.45mcmin","padding-left":"0.6mcw","padding-right":"0.6mcw"},
-   "c":[{"n":"mono","t":"running","s":{"color":"term(2)"}}]}]}}
+{
+  "S": {
+    "n": "flex",
+    "s": {
+      "justify-content": "center",
+      "align-items": "center",
+      "width": "100%",
+      "height": "100%",
+      "background": "term(bg)"
+    },
+    "c": [
+      {
+        "n": "flex",
+        "s": {
+          "background": "color-mix(in srgb, term(2) 18%, term(bg))",
+          "border-radius": "0.45mcmin",
+          "padding-left": "0.6mcw",
+          "padding-right": "0.6mcw"
+        },
+        "c": [{ "n": "mono", "t": "running", "s": { "color": "term(2)" } }]
+      }
+    ]
+  }
+}
 ```
 
 **A.2 A flex-grow media bar** (fixed glyph + growing track + fixed time):
 
 ```json
-{"S":{"n":"flex","s":{"flex-direction":"row","align-items":"center",
-  "gap":"0.9mcw","width":"100%","height":"100%"},
- "c":[
-  {"n":"mono","t":"▶","s":{"color":"term(4)"}},
-  {"n":"flex","s":{"flex-grow":1,"height":"0.3mch","background":"term(8)",
-    "border-radius":"0.2mcmin"},
-   "c":[{"n":"box","s":{"width":"40%","height":"0.3mch","background":"term(4)",
-     "border-radius":"0.2mcmin"}}]},
-  {"n":"mono","t":"1:23","s":{"color":"term(fg)"}}
- ]}}
+{
+  "S": {
+    "n": "flex",
+    "s": {
+      "flex-direction": "row",
+      "align-items": "center",
+      "gap": "0.9mcw",
+      "width": "100%",
+      "height": "100%"
+    },
+    "c": [
+      { "n": "mono", "t": "▶", "s": { "color": "term(4)" } },
+      {
+        "n": "flex",
+        "s": {
+          "flex-grow": 1,
+          "height": "0.3much",
+          "background": "term(8)",
+          "border-radius": "0.2mcmin"
+        },
+        "c": [
+          {
+            "n": "box",
+            "s": {
+              "width": "40%",
+              "height": "0.3much",
+              "background": "term(4)",
+              "border-radius": "0.2mcmin"
+            }
+          }
+        ]
+      },
+      { "n": "mono", "t": "1:23", "s": { "color": "term(fg)" } }
+    ]
+  }
+}
 ```
 
 Full message form: `ESC _ twp;v=1,c=34,r=3;<json> ESC \`.
 
 ---
 
-*This is a first draft for discussion. Section numbering, key names, and the
-exact unit/keyword spellings are subject to change based on review.*
+_This is a first draft for discussion. Section numbering, key names, and the
+exact unit/keyword spellings are subject to change based on review._

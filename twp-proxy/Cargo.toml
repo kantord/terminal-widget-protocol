@@ -8,8 +8,8 @@ edition = "2024"
 portable-pty = "0.9"
 
 # Image generation
-takumi = "1.4"
 image = "0.25"
+takumi = "1.4"
 
 # Hashing for content-addressed image IDs
 blake3 = "1"

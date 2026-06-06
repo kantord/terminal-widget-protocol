@@ -1,0 +1,6 @@
+# Configuration for `typos` (spell checker).
+[files]
+# Generated Unicode data table (row/column combining-diacritic code points and
+# their official character names, e.g. "TAI VIET VOWEL UE") — not prose, must
+# not be spell-checked or rewritten.
+extend-exclude = ["twp-proxy/rowcolumn-diacritics.txt"]

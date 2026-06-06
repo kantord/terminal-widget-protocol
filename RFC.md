@@ -14,49 +14,19 @@ layout, font sizing, vector graphics, images, gradients, shadows,
 and rounded corners — by sending a single JSON scene description wrapped in an
 APC control sequence.
 
-TWP builds directly on the graphics capabilities that the Kitty terminal and
-others have established, and adds a small, optional layer above them. The shift
-is from imperative to declarative: instead of computing the final pixels in the
-application and asking the terminal to place them, the sender hands the terminal
-a compact, bounded *description* — a small widget tree with layout and style —
-and the terminal renders it.
+It builds on the inline-graphics capabilities established by the Kitty terminal
+and others, adding a small, optional layer: rather than computing the final
+pixels itself, the sender hands the terminal a compact, bounded description and
+the terminal renders it through its *own* engine. Because the terminal does the
+drawing, widgets match the user's fonts, cell grid, and color theme, can stay
+real selectable text, and adapt to any font size — while applications avoid
+reinventing a renderer, a layout engine, and a theming system. The vocabulary is
+deliberately small and entirely ignorable — not a document engine or a browser
+in the terminal — and the bundled implementation is a *polyfill*, not a
+blueprint; the intended home is the terminal's own rendering pipeline (§3).
 
-This is deliberately **not** an attempt to put a document engine, a styling
-language, or a browser inside the terminal. The vocabulary is intentionally
-small (a handful of node types and style properties, §5–§8) — no scripting, no
-DOM, no network, no general document model — and it is **entirely optional and
-ignorable**: a terminal that wants nothing to do with it skips a standard APC
-sequence and shows nothing (§4), and a terminal that does want it can implement
-as little of it as it likes, because anything unrecognized is dropped (§10). The
-goal is to let the terminal *reuse* rendering machinery it already has, not to
-grow a new subsystem.
-
-The point of describing a scene and running it through the terminal's *own*
-rendering engine — rather than rendering pixels in the application and shipping
-them — is that the terminal already owns the parts that are hard to reproduce
-from outside: the user's fonts, the cell grid, the color theme, the rasterizer,
-and the screen model (selection, reflow, accessibility). A declared scene can
-therefore be drawn to match the terminal exactly, adopt the user's theme, remain
-real selectable text, and adapt to any font or size — and applications stop
-reinventing a renderer, a layout engine, and a theming system apiece. Two
-properties of this approach are worth calling out, and both follow from letting
-the terminal do the drawing:
-
-1. **Cell-native layout.** Sizes are expressed in *monospace cell units*, so a
-   widget aligns to the character grid on any terminal regardless of font,
-   size, or DPI — not just the one it was authored on.
-2. **Theme-reactive color.** Colors can be drawn from the terminal's own
-   palette (`term(fg)`, `term(2)`, …) and derived from it (`color-mix(...)`),
-   so the same widget re-tones itself to the user's color scheme — light or
-   dark — with no per-theme code.
-
-TWP is transport-framed with the standard ECMA-48 APC mechanism, so terminals
-that do not implement it silently ignore TWP messages.
-
-The implementation bundled with this document is a **polyfill** (§3.2): it makes
-TWP work on today's terminals from the application's perspective, but it is a
-demonstration, not a blueprint. The intended home for TWP is *inside* a
-terminal's own rendering pipeline (§3.3).
+Motivation (§1), goals and non-goals (§2), the implementation model (§3), and the
+wire format and semantics (§4–§9) follow.
 
 ---
 

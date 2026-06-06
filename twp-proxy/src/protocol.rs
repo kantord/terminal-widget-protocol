@@ -151,7 +151,7 @@ pub struct Style {
 /// A length. A bare number is pixels; a string carries a unit:
 ///   * `"50%"`    — percentage of the parent
 ///   * `"3mcw"`   — monospace cell *widths* (x-axis, `n · px_per_col`)
-///   * `"2much"`   — monospace cell *heights* (y-axis, `n · px_per_row`)
+///   * `"2mch"`   — monospace cell *heights* (y-axis, `n · px_per_row`)
 ///   * `"1mcmin"` — `n · min(px_per_col, px_per_row)` (square that *fits* a cell)
 ///   * `"1mcmax"` — `n · max(px_per_col, px_per_row)` (square that *covers* a cell)
 ///
@@ -216,7 +216,7 @@ fn parse_dimension(s: &str) -> Option<Dimension> {
         ("mcmin", Dimension::CellMin as fn(f32) -> Dimension),
         ("mcmax", Dimension::CellMax as fn(f32) -> Dimension),
         ("mcw", Dimension::ColWidth as fn(f32) -> Dimension),
-        ("much", Dimension::RowHeight as fn(f32) -> Dimension),
+        ("mch", Dimension::RowHeight as fn(f32) -> Dimension),
         ("px", Dimension::Px as fn(f32) -> Dimension),
     ] {
         if let Some(n) = s.strip_suffix(suffix) {

@@ -164,7 +164,7 @@ pub(crate) fn substitute_term(value: &str) -> String {
     out
 }
 
-/// Resolve `m`-cell units (`3mcw`, `0.5much`, `1mcmin`, `1mcmax`) embedded in a
+/// Resolve `m`-cell units (`3mcw`, `0.5mch`, `1mcmin`, `1mcmax`) embedded in a
 /// CSS *value* string to pixels, so they work in the passthrough path too (not
 /// just the typed `width`/`height`/`gap`/`padding` fields). Anything that isn't
 /// `<number><cell-unit>` is copied through untouched.
@@ -175,7 +175,7 @@ pub(crate) fn substitute_cell_units(value: &str) -> String {
         ("mcmin", pc.min(pr)),
         ("mcmax", pc.max(pr)),
         ("mcw", pc),
-        ("much", pr),
+        ("mch", pr),
     ];
     let b = value.as_bytes();
     let mut out = String::with_capacity(value.len());

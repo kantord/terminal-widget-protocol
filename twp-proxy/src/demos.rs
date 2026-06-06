@@ -534,7 +534,7 @@ fn docker_dashboard_scene() -> Value {
 
     let sans = "twp-sans";
 
-    // Sizes are in monospace cell units (mcw = cell widths, much = cell heights,
+    // Sizes are in monospace cell units (mcw = cell widths, mch = cell heights,
     // mcmin = min(w,h) for squares). The whole dashboard therefore aligns to the
     // character grid at *any* terminal's cell size, not just the one it was
     // drawn at. px remains only for sub-cell cosmetics (1px borders).
@@ -563,8 +563,8 @@ fn docker_dashboard_scene() -> Value {
     // ── Stat cards: two gauges + a gradient network area chart ──
     let gauge_card = |value: f64, fill: &str, label: &str| {
         let pct = format!("{}%", (value * 100.0).round() as i64);
-        json!({"n":"flex","s":{"flex-direction":"column","align-items":"center","justify-content":"center","gap":"0.1much","width":"11.5mcw","height":"4.8much","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.6mcw"},"c":[
-            json!({"n":"svg","t":gauge_svg(value, fill),"s":{"width":"9.2mcw","height":"2.2much"}}),
+        json!({"n":"flex","s":{"flex-direction":"column","align-items":"center","justify-content":"center","gap":"0.1mch","width":"11.5mcw","height":"4.8mch","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.6mcw"},"c":[
+            json!({"n":"svg","t":gauge_svg(value, fill),"s":{"width":"9.2mcw","height":"2.2mch"}}),
             json!({"n":"mono","t":pct,"s":{"color":fill,"font-weight":"bold"}}),
             json!({"n":"text","t":label,"s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}})
         ]})
@@ -594,12 +594,12 @@ fn docker_dashboard_scene() -> Value {
          <path d='{area}' fill='url(#ng)'/>\
          <path d='{line}' fill='none' stroke='term(4)' stroke-width='2' stroke-linejoin='round'/></svg>"
     );
-    let net_card = json!({"n":"flex","s":{"flex-direction":"column","flex-grow":1,"gap":"0.2much","height":"4.8much","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.75mcw"},"c":[
+    let net_card = json!({"n":"flex","s":{"flex-direction":"column","flex-grow":1,"gap":"0.2mch","height":"4.8mch","background":surface,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"padding":"0.75mcw"},"c":[
         json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.6mcw"},"c":[
             json!({"n":"text","t":"Network I/O","s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}}),
             json!({"n":"mono","t":"↑ 4.2MB/s","s":{"color":blue}})
         ]}),
-        json!({"n":"svg","t":net_svg,"s":{"width":"100%","height":"2.4much"}})
+        json!({"n":"svg","t":net_svg,"s":{"width":"100%","height":"2.4mch"}})
     ]});
     let cards = json!({"n":"flex","s":{"flex-direction":"row","gap":"0.9mcw","width":"100%"},"c":[
         gauge_card(0.34, blue, "CPU"), gauge_card(0.61, cyan, "Memory"), net_card
@@ -662,8 +662,8 @@ fn docker_dashboard_scene() -> Value {
             let dot = json!({"n":"box","s":{"width":"0.77mcmin","height":"0.77mcmin","border-radius":"0.4mcmin","background":sc}});
             let bar_fill = if *cpu < 0.5 { green } else if *cpu < 0.8 { yellow } else { red };
             let cpu_cell = gcell(cpu_w, json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.6mcw"},"c":[
-                json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","width":"5.4mcw","height":"0.25much","background":row_line,"border-radius":"0.3mcmin"},"c":[
-                    json!({"n":"box","s":{"width":format!("{}%", (cpu*100.0).round() as i64),"height":"0.25much","background":bar_fill,"border-radius":"0.3mcmin"}})
+                json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","width":"5.4mcw","height":"0.25mch","background":row_line,"border-radius":"0.3mcmin"},"c":[
+                    json!({"n":"box","s":{"width":format!("{}%", (cpu*100.0).round() as i64),"height":"0.25mch","background":bar_fill,"border-radius":"0.3mcmin"}})
                 ]}),
                 json!({"n":"mono","t":format!("{:>3}%", (cpu*100.0).round() as i64),"s":{"color":muted}})
             ]}));
@@ -676,7 +676,7 @@ fn docker_dashboard_scene() -> Value {
             let spark = sparkline_svg(&series, if running { cyan } else { dim }, 70.0, 18.0);
             // Badge sizes to its (padded) content so the pill always wraps the
             // word; the surrounding status cell is fixed-width for alignment.
-            let badge = json!({"n":"flex","s":{"justify-content":"center","align-items":"center","background":format!("color-mix(in srgb, {sc} 18%, term(bg))"),"border-radius":"0.45mcmin","padding-top":"0.1much","padding-bottom":"0.1much","padding-left":"0.5mcw","padding-right":"0.5mcw"},"c":[
+            let badge = json!({"n":"flex","s":{"justify-content":"center","align-items":"center","background":format!("color-mix(in srgb, {sc} 18%, term(bg))"),"border-radius":"0.45mcmin","padding-top":"0.1mch","padding-bottom":"0.1mch","padding-left":"0.5mcw","padding-right":"0.5mcw"},"c":[
                 json!({"n":"mono","t":*status,"s":{"color":sc}})
             ]});
             json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.9mcw","width":"100%","padding":"0.45mcw","border-top-width":"1px","border-top-style":"solid","border-top-color":row_line},"c":[
@@ -684,7 +684,7 @@ fn docker_dashboard_scene() -> Value {
                 json!({"n":"mono","t":format!("{:<14}", name),"s":{"color":fg}}),
                 json!({"n":"mono","t":format!("{:<13}", image),"s":{"color":muted}}),
                 cpu_cell,
-                gcell(trend_w, json!({"n":"svg","t":spark,"s":{"width":"5.7mcw","height":"0.7much"}})),
+                gcell(trend_w, json!({"n":"svg","t":spark,"s":{"width":"5.7mcw","height":"0.7mch"}})),
                 gcell(status_w, badge),
                 json!({"n":"mono","t":format!("{:<8}", uptime),"s":{"color":dim}})
             ]})
@@ -697,7 +697,7 @@ fn docker_dashboard_scene() -> Value {
 
     json!({"S":{
         "n":"flex",
-        "s":{"flex-direction":"column","gap":"0.45much","padding":"1.2mcw","width":"100%","height":"100%","background":editor},
+        "s":{"flex-direction":"column","gap":"0.45mch","padding":"1.2mcw","width":"100%","height":"100%","background":editor},
         "c":[header, cards, table]
     }})
 }
@@ -772,7 +772,7 @@ fn diff_review_scene() -> Value {
     // Border colour is derived (color-mix), so it goes through the CSS
     // passthrough longhands rather than the typed `border` (which only takes a
     // plain colour).
-    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.05much","padding":"0.3mcw","background":editor,"border-radius":"0.45mcmin","border-width":"1px","border-style":"solid","border-color":border},"c":diff_rows});
+    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.05mch","padding":"0.3mcw","background":editor,"border-radius":"0.45mcmin","border-width":"1px","border-style":"solid","border-color":border},"c":diff_rows});
 
     // Inline review comment: avatar (with online dot) + shadowed bubble. The
     // dot's ring is the editor background so it reads as cut into the surface.
@@ -782,19 +782,19 @@ fn diff_review_scene() -> Value {
         json!({"n":"text","t":"reviewed 2h ago","s":{"color":muted,"font-size":11,"font-family":sans,"letter-spacing":"0px"}})
     ]});
     let comment_text = json!({"n":"text","t":"Good — a named constant beats a magic number. Ship it.","s":{"color":body,"font-size":13,"font-family":sans,"letter-spacing":"0px"}});
-    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.35much","padding":"0.75mcw","background":surface2,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"box-shadow":"0 8px 22px #00000055","max-width":"62%"},"c":[author, comment_text]});
+    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.35mch","padding":"0.75mcw","background":surface2,"border-radius":"0.75mcmin","border-width":"1px","border-style":"solid","border-color":border,"box-shadow":"0 8px 22px #00000055","max-width":"62%"},"c":[author, comment_text]});
     let comment = json!({"n":"flex","s":{"flex-direction":"row","align-items":"start","gap":"0.77mcw"},"c":[avatar, bubble]});
 
     // The comment floats *over* the diff (a review popover), positioned by a
     // flex overlay inside a stack — anchored near the changed line, its shadow
     // lifting it off the code.
-    let floating = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","height":"100%","justify-content":"flex-start","align-items":"flex-start","padding-top":"2.14much","padding-left":"6.9mcw"},"c":[comment]});
+    let floating = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","height":"100%","justify-content":"flex-start","align-items":"flex-start","padding-top":"2.14mch","padding-left":"6.9mcw"},"c":[comment]});
     let stack =
-        json!({"n":"stack","s":{"width":"100%","height":"6.55much"},"c":[diff_box, floating]});
+        json!({"n":"stack","s":{"width":"100%","height":"6.55mch"},"c":[diff_box, floating]});
 
     json!({"S":{
         "n":"flex",
-        "s":{"flex-direction":"column","gap":"0.45much","padding":"1.4mcw","width":"100%","height":"100%","background":editor},
+        "s":{"flex-direction":"column","gap":"0.45mch","padding":"1.4mcw","width":"100%","height":"100%","background":editor},
         "c":[file_header, stack]
     }})
 }

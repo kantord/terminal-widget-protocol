@@ -431,7 +431,7 @@ mod tests {
         // A row holds a fixed 40px green box and a red box with flex-grow:1.
         // The red box must claim the *rest* of the width (it has no width of its
         // own, so without flex-grow it would collapse to zero). We assert the
-        // red region is much wider than the green one.
+        // red region is mch wider than the green one.
         let json = "{\"S\":{\"n\":\"flex\",\"s\":{\"flex-direction\":\"row\",\"width\":\"100%\",\"height\":\"100%\"},\"c\":[\
             {\"n\":\"box\",\"s\":{\"flex-grow\":1,\"height\":\"100%\",\"background\":\"#ff0000\"}},\
             {\"n\":\"box\",\"s\":{\"width\":40,\"height\":\"100%\",\"background\":\"#00ff00\"}}\

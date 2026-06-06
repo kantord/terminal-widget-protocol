@@ -30,6 +30,11 @@ repos:
     rev: v1.29.4
     hooks:
       - id: typos
+        # CHECK ONLY — override the hook's default `--write-changes` so typos
+        # never silently rewrites files (it once "fixed" the `mch` unit to
+        # "much"). Findings are reported; a human fixes them. Project-specific
+        # words are whitelisted in `_typos.toml`.
+        args: [--force-exclude]
 
   # ── Markdown semantic lint (formatting is owned by dprint; see config) ──
   - repo: https://github.com/DavidAnson/markdownlint-cli2

@@ -153,6 +153,17 @@ features like text selection and accessibility — is hard, and the entity best
 placed to do it (the terminal itself) is never given a description it can work
 from. TWP provides that description.
 
+| Gruvbox Dark                                                                                      | Solarized Light                                                                                              |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| ![TWP Docker dashboard rendered in a dark terminal theme](docs/figures/docker-dashboard-dark.png) | ![The same TWP Docker dashboard rendered in a light terminal theme](docs/figures/docker-dashboard-light.png) |
+
+_The same scene, two themes._ A Docker dashboard described once as a TWP scene
+and rendered by the reference polyfill. Every colour derives from the terminal
+palette (`term()` / `color-mix()`), so it re-tones to each theme with no
+per-theme code; sizes are in cell units, so it aligns to the grid at any font
+size. (Figures in this document are real polyfill output — see
+`scripts/gen-figures.sh`.)
+
 ### 1.1 Pixel-transport protocols solved a different layer
 
 Sixel, the Kitty graphics protocol, and iTerm2 inline images solved a real and
@@ -476,6 +487,11 @@ Enables smooth curves, arcs, gauges, sparklines, and gradient fills that the box
 model cannot express. SVG `fill`/`stroke` accept `term(...)` colors and
 `currentColor` (§8).
 
+![A TWP svg node rendered as a smooth line chart with a gradient area fill](docs/figures/svg-line-chart.png)
+
+_An `svg` node: smooth curves and a gradient fill that the box model can't
+express, rasterized by the renderer into the node's box._
+
 ### 5.6 `img` — bitmap image
 
 An `img` node carries an `img` object describing a bitmap, with keys
@@ -498,6 +514,11 @@ Children are painted as full-bleed layers, later children on top — a z-order
 overlay. Used for scrims over images, badges on corners, and floating popovers.
 Each layer occupies the stack's full box; position within a layer is achieved
 with a nested `flex`.
+
+![A code-review diff with a floating review-comment popover layered on top](docs/figures/diff-review.png)
+
+_A `stack` overlay: a review-comment popover (avatar, bubble, drop shadow)
+floating over a syntax-tinted diff._
 
 ### 5.8 Unknown node types
 
@@ -535,6 +556,12 @@ property not listed is treated as a raw CSS declaration passed to the rasterizer
 `flex-direction` (`row`|`column`|…), `justify-content`, `align-items`, `gap`,
 `padding`. Values follow CSS semantics.
 
+![A media bar: a fixed play glyph, a flexible progress track, and a fixed time label](docs/figures/now-playing.png)
+
+_Flex layout: the play glyph and time label are fixed; the progress track
+carries `flex-grow` and absorbs the remaining width. Spacing is in cell units,
+so the bar stays aligned at any font size._
+
 ### 7.2 Sizing
 
 `width`, `height`, `border-radius` take a **length** (§7.3). `gap` and `padding`
@@ -549,7 +576,7 @@ A length is either a bare number (**pixels**) or a string with a unit:
 | `42`       | pixels                        | `42px` (escape hatch for sub-cell cosmetics) |
 | `"50%"`    | percent                       | 50% of the parent's corresponding axis       |
 | `"3mcw"`   | monospace **cell width** (x)  | `3 · px_per_col`                             |
-| `"2much"`  | monospace **cell height** (y) | `2 · px_per_row`                             |
+| `"2mch"`   | monospace **cell height** (y) | `2 · px_per_row`                             |
 | `"1mcmin"` | cell **min**                  | `1 · min(px_per_col, px_per_row)`            |
 | `"1mcmax"` | cell **max**                  | `1 · max(px_per_col, px_per_row)`            |
 
@@ -557,10 +584,10 @@ A length is either a bare number (**pixels**) or a string with a unit:
 character cell is _anisotropic_ (typically ~1:2, taller than wide) and its pixel
 size varies per terminal (font, size, DPI). A widget sized in pixels aligns to
 the grid only on the terminal it was authored on; a widget sized in cell units
-aligns _everywhere_, because the renderer resolves `mcw`/`much` against the
-live, per-terminal cell size.
+aligns _everywhere_, because the renderer resolves `mcw`/`mch` against the live,
+per-terminal cell size.
 
-Because the two axes are independent, there are two base units (`mcw`, `much`).
+Because the two axes are independent, there are two base units (`mcw`, `mch`).
 For elements that must be _square in pixels_ despite the anisotropic cell —
 icons, status dots, circular avatars — `mcmin` gives the largest square that
 _fits_ within a cell (like `object-fit: contain`) and `mcmax` the smallest that
@@ -619,6 +646,15 @@ The renderer learns the palette by querying the terminal (the polyfill uses OSC
 4 / OSC 10 / OSC 11). Because indices 0–15 are theme-defined, `term(2)` is "this
 user's green," not a fixed RGB — so a widget built on `term(...)` adopts the
 user's color scheme automatically.
+
+| Native ANSI swatches (`\e[48;5;Nm`)                                          | The same colours via `term(0)`…`term(15)`                                                       |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| ![Native terminal ANSI color swatches](docs/figures/term-palette-native.png) | ![The same 16 colors requested through TWP term() functions](docs/figures/term-palette-twp.png) |
+
+_`term()` resolves to the terminal's own palette: the swatches the terminal
+prints natively (left) and the same sixteen colours requested via `term()` and
+rendered by the polyfill (right) match, because both come from the queried
+palette._
 
 ### 8.3 Derived colors
 
@@ -840,7 +876,7 @@ forward-compatibility story and applies uniformly at every layer.
         "n": "flex",
         "s": {
           "flex-grow": 1,
-          "height": "0.3much",
+          "height": "0.3mch",
           "background": "term(8)",
           "border-radius": "0.2mcmin"
         },
@@ -849,7 +885,7 @@ forward-compatibility story and applies uniformly at every layer.
             "n": "box",
             "s": {
               "width": "40%",
-              "height": "0.3much",
+              "height": "0.3mch",
               "background": "term(4)",
               "border-radius": "0.2mcmin"
             }

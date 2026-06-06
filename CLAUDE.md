@@ -118,7 +118,7 @@ the hard parts. Keep these threads:
   - Payload keys: `S` (scene), `C` (component defs)
   - Nodes: `flex`, `box`, `text`, `mono`, `svg`, `img`, `stack` (+ `$param` /
     `$<name>` components)
-  - Cell units: `mcw`, `much`, `mcmin`, `mcmax` (px and `%` also valid)
+  - Cell units: `mcw`, `mch`, `mcmin`, `mcmax` (px and `%` also valid)
   - Colors: `term(fg|bg|0-255)`, `transparent`, `currentColor`, `color-mix(...)`
   - Mono sizing: `scale`, `char-width`, `subscale-n`, `subscale-d`
 - The "unknown ⇒ ignore, never fail" rule is _the_ forward-compatibility story;

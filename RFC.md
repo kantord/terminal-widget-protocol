@@ -221,6 +221,17 @@ vocabulary — which is what this document specifies.
   into a terminal's *existing* rendering pipeline (§3.3). The bundled polyfill
   (§3.2) makes it work *now* on any Kitty-graphics-capable terminal, so the
   protocol can be used and evaluated before any terminal adopts it.
+- **Respect accessibility.** This document does **not** yet offer a mature
+  accessibility model — that is acknowledged future work (§13). But accessibility
+  is an explicit goal at three levels: (1) **do no harm** — TWP MUST NOT degrade
+  the accessibility a terminal already provides; (2) **handle the easy wins the
+  proposal itself creates** — because a scene carries real text (`text` / `mono`
+  nodes) rather than only pixels, a native renderer can keep that text selectable
+  and exposed to assistive technology instead of flattening it into an
+  unreadable image; and (3) **be a substrate for future accessibility** — the
+  declarative tree is the natural place to later attach semantic roles, labels,
+  and alternative text. (The bundled polyfill, rendering to images, does not yet
+  realize level 2; only native integration does — §3.3.)
 
 **Non-Goals (Phase 1)**
 
@@ -693,6 +704,11 @@ forward-compatibility story and applies uniformly at every layer.
   of Phase 1.
 - **Plain-text fallback.** A standard way to attach an out-of-band plain-text
   rendering for wrapper-unaware terminals (§10).
+- **Accessibility semantics.** A mature accessibility model (§2): node-level
+  semantic roles, accessible names/labels, and alternative text, plus a defined
+  mapping from the scene tree to platform accessibility trees and to the
+  terminal's own a11y surface. Phase 1 establishes only the goals — do no harm,
+  keep declared text exposable, and leave room for this — not the vocabulary.
 - **Interactivity.** A cell→node hit map plus an input convention would enable
   buttons, hover, and focus. Out of scope for Phase 1, but the declarative tree
   is a natural substrate for it.

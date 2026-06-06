@@ -1,32 +1,47 @@
 # Terminal Widget Protocol (TWP) — Draft RFC
 
-**Status:** Draft / Request for Comments
+**Status:** Early proposol, polyfill, no production implementation.
 **Version:** Protocol `v=1` (Phase 1)
-**Reference implementation:** `twp-proxy` — a polyfill, not a blueprint (see §3.2)
 
 ---
 
 ## Abstract
 
-The Terminal Widget Protocol (TWP) is an escape-sequence protocol that lets a
-program render **declarative, themeable widgets** inline in a terminal — flexbox
-layout, font sizing, vector graphics, images, gradients, shadows,
-and rounded corners — by sending a single JSON scene description wrapped in an
-APC control sequence.
+The Terminal Widget Protocol (TWP) is an escape-sequence protocol for terminal emulators
+that allows programs to present widgets that precisely fit into the terminal's
+monospace grid, typographic configuration, color scheme, and user-interaction patterns.
 
-It builds on the inline-graphics capabilities established by the Kitty terminal
-and others, adding a small, optional layer: rather than computing the final
-pixels itself, the sender hands the terminal a compact, bounded description and
-the terminal renders it through its *own* engine. Because the terminal does the
-drawing, widgets match the user's fonts, cell grid, and color theme, can stay
-real selectable text, and adapt to any font size — while applications avoid
-reinventing a renderer, a layout engine, and a theming system. The vocabulary is
-deliberately small and entirely ignorable — not a document engine or a browser
-in the terminal — and the bundled implementation is a *polyfill*, not a
-blueprint; the intended home is the terminal's own rendering pipeline (§3).
+TWP allows propgrams to utilize graphical widgets that respect the terminal's particular
+rendering configuration, but can make better use of the space and colors, allowing CLI/TUI
+applications to implement features that would otherwise require a native application or a
+web application.
 
-Motivation (§1), goals and non-goals (§2), the implementation model (§3), and the
-wire format and semantics (§4–§9) follow.
+A declarative, structured format allows for rich customization of the terminal's built-in
+rendering pipeline and interaction loop, albeit the included experimental polyfill proves the viability of implementing many of TWP's features in a separate module, as long as that module has
+enough information about how the terminal is going to render text.
+
+This RFC is heavily inspired by and actively builds upon the success of pre-existing work
+in this area, especially Kitty's Terminal graphics protocol (https://sw.kovidgoyal.net/kitty/graphics-protocol/), which the polyfill relies on. TWP, however has a structured, text-based format, better 
+suited for user-interfaces because it communicates intent to the terminal - rather than raw pixels - which allows the terminal's renderer to take control of the right details such as monospace cell size
+or color settings.
+
+To understand exactly what TWP is designed to be, it's important to distinguish it from the
+following things:
+- **A document engine**: TWP's nodes do encode information in a structured way, and this structure communicates intent, but it mainly communicates intent on how the terminal's renderer should behave. A hypothetical application could use TWP to display parts of a document, but it would own all aspects of the document format and use TWP to render certain aspects of it.
+- **A web browser**: TWP borrows web technology to avoid reinventing the wheel and facilitate code reuse, but TWP is merely a renderer-agnostic, terminal-shaped way to describe static scenes to rendering engines. In other words, it is more like "a static SVG but for monospace terminal grids".
+- **A TUI/GUI/CLI toolkit**: TWP does not own any aspects of such a toolkit, but it could empower existing TUI/CLI toolkits more freedom in what they ask the terminal to render.
+
+TWP lets applications express layouts in monospace cells, which means that layouts can be measured
+in characters, and making them line up with "raw text" is a matter of counting characters. Typography is inherited from the terminal, and so is the color scheme. However, TWP widgets can derive adjusted colors form the built-in terminal colors, thus allowing for more legible text and cleaner structure while also fitting neatly into the user's theme.
+
+TWP is transport-framed with the standard ECMA-48 APC mechanism, so terminals
+that do not implement it silently ignore TWP messages.
+
+The implementation bundled with this document is a **polyfill** (§3.2): it makes
+TWP work on the Kitty terminal and allows experimenting with the protocol, but it is
+not production-ready, not a 100% correct implementation of the protocol and is largely 
+vibe-coded for testing and demonstration purposes, so you should only use it at your own risk, and
+at the cost of your own patience. 
 
 ---
 

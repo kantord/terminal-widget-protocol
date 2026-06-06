@@ -1,0 +1,20 @@
+{
+  "S": {
+    "n": "flex",
+    "s": { "flex-direction": "row", "align-items": "center", "gap": "0.9mcw", "width": "100%", "height": "100%" },
+    "c": [
+      { "n": "mono", "t": "▶", "s": { "color": "term(4)" } },
+      {
+        "n": "flex",
+        "s": { "flex-grow": 1, "height": "0.3mch", "background": "term(8)", "border-radius": "0.2mcmin" },
+        "c": [
+          {
+            "n": "box",
+            "s": { "width": "40%", "height": "0.3mch", "background": "term(4)", "border-radius": "0.2mcmin" }
+          }
+        ]
+      },
+      { "n": "mono", "t": "1:23", "s": { "color": "term(fg)" } }
+    ]
+  }
+}

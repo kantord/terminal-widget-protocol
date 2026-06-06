@@ -153,16 +153,22 @@ features like text selection and accessibility — is hard, and the entity best
 placed to do it (the terminal itself) is never given a description it can work
 from. TWP provides that description.
 
-| Gruvbox Dark                                                                                      | Solarized Light                                                                                              |
-| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| ![TWP Docker dashboard rendered in a dark terminal theme](docs/figures/docker-dashboard-dark.png) | ![The same TWP Docker dashboard rendered in a light terminal theme](docs/figures/docker-dashboard-light.png) |
+<!-- `> just docker-hero` -->
+<!-- BEGIN mdsh -->
+
+| Gruvbox Dark                                                         | Solarized Light                                                                 |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| ![dashboard in a dark theme](docs/figures/docker-dashboard-dark.png) | ![the same dashboard in a light theme](docs/figures/docker-dashboard-light.png) |
+
+<!-- END mdsh -->
 
 _The same scene, two themes._ A Docker dashboard described once as a TWP scene
 and rendered by the reference polyfill. Every colour derives from the terminal
 palette (`term()` / `color-mix()`), so it re-tones to each theme with no
 per-theme code; sizes are in cell units, so it aligns to the grid at any font
-size. (Figures in this document are real polyfill output — see
-`scripts/gen-figures.sh`.)
+size. (Figures and worked examples in this document are real renderer output,
+generated in place from their JSON sources by `just docs`; each example shows
+the exact JSON that produced its image.)
 
 ### 1.1 Pixel-transport protocols solved a different layer
 
@@ -487,7 +493,12 @@ Enables smooth curves, arcs, gauges, sparklines, and gradient fills that the box
 model cannot express. SVG `fill`/`stroke` accept `term(...)` colors and
 `currentColor` (§8).
 
-![A TWP svg node rendered as a smooth line chart with a gradient area fill](docs/figures/svg-line-chart.png)
+<!-- `> just figure app_line_chart svg-line-chart` -->
+<!-- BEGIN mdsh -->
+
+![app_line_chart](docs/figures/svg-line-chart.png)
+
+<!-- END mdsh -->
 
 _An `svg` node: smooth curves and a gradient fill that the box model can't
 express, rasterized by the renderer into the node's box._
@@ -515,7 +526,12 @@ overlay. Used for scrims over images, badges on corners, and floating popovers.
 Each layer occupies the stack's full box; position within a layer is achieved
 with a nested `flex`.
 
-![A code-review diff with a floating review-comment popover layered on top](docs/figures/diff-review.png)
+<!-- `> just figure diff_review_dracula diff-review` -->
+<!-- BEGIN mdsh -->
+
+![diff_review_dracula](docs/figures/diff-review.png)
+
+<!-- END mdsh -->
 
 _A `stack` overlay: a review-comment popover (avatar, bubble, drop shadow)
 floating over a syntax-tinted diff._
@@ -556,7 +572,12 @@ property not listed is treated as a raw CSS declaration passed to the rasterizer
 `flex-direction` (`row`|`column`|…), `justify-content`, `align-items`, `gap`,
 `padding`. Values follow CSS semantics.
 
-![A media bar: a fixed play glyph, a flexible progress track, and a fixed time label](docs/figures/now-playing.png)
+<!-- `> just figure now_playing_bar now-playing` -->
+<!-- BEGIN mdsh -->
+
+![now_playing_bar](docs/figures/now-playing.png)
+
+<!-- END mdsh -->
 
 _Flex layout: the play glyph and time label are fixed; the progress track
 carries `flex-grow` and absorbs the remaining width. Spacing is in cell units,
@@ -828,7 +849,15 @@ forward-compatibility story and applies uniformly at every layer.
 
 ## Appendix A — Worked Examples
 
-**A.1 A themed status pill (cell-native, theme-derived):**
+Each example is generated from a single source file in `examples/` by `mdsh`
+(`just docs`): the JSON shown is exactly what produced the image beneath it, so
+the two cannot drift. Colours use `term()`/`color-mix()`, shown here in the
+Gruvbox Dark palette.
+
+### A.1 A themed status pill (cell-native, theme-derived)
+
+<!-- `> just example status-pill 24 3 "Gruvbox Dark"` -->
+<!-- BEGIN mdsh -->
 
 ```json
 {
@@ -857,7 +886,14 @@ forward-compatibility story and applies uniformly at every layer.
 }
 ```
 
-**A.2 A flex-grow media bar** (fixed glyph + growing track + fixed time):
+![status-pill](docs/figures/status-pill.png)
+
+<!-- END mdsh -->
+
+### A.2 A flex-grow media bar (fixed glyph, growing track, fixed time)
+
+<!-- `> just example media-bar 34 3 "Gruvbox Dark"` -->
+<!-- BEGIN mdsh -->
 
 ```json
 {
@@ -898,7 +934,11 @@ forward-compatibility story and applies uniformly at every layer.
 }
 ```
 
-Full message form: `ESC _ twp;v=1,c=34,r=3;<json> ESC \`.
+![media-bar](docs/figures/media-bar.png)
+
+<!-- END mdsh -->
+
+Full message form: `ESC _ twp;v=1,c=COLS,r=ROWS;<compact json> ESC \`.
 
 ---
 

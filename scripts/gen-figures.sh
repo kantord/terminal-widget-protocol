@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Regenerate the figures embedded in RFC.md from the reference polyfill's own
-# output. This runs the visual test harness (which needs Xvfb + kitty) and
-# copies a curated subset of its real captures into docs/figures/.
+# Generate the *one* RFC figure that needs the real terminal: the native-ANSI
+# vs `term()` palette comparison (§8.2). Its left half is the terminal's own SGR
+# rendering, which only the kitty harness (Xvfb + kitty) can capture — the
+# in-process renderer can't produce it.
 #
-# The figures in the spec are therefore not mock-ups — they are exactly what
-# `twp-proxy` renders. Run from anywhere:  scripts/gen-figures.sh
+# Every OTHER figure and example in RFC.md is rendered in-process by `twp-render`
+# and inserted by mdsh — regenerate those with `just docs`, not this script.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -12,17 +13,9 @@ RESULTS="${TWP_RESULTS_DIR:-/tmp/twp-visual-test}"
 OUT="docs/figures"
 mkdir -p "$OUT"
 
-echo "Running the visual harness (Xvfb + kitty)…"
+echo "Running the visual harness (Xvfb + kitty) for the native-palette figure…"
 ( cd twp-proxy && cargo run --release --bin twp-screenshot -- test ) || true
 
-copy() { cp "$RESULTS/$1" "$OUT/$2" && echo "  $OUT/$2"; }
-echo "Copying curated figures:"
-copy twp_docker_dashboard_gruvbox_dark.png    docker-dashboard-dark.png
-copy twp_docker_dashboard_solarized_light.png docker-dashboard-light.png
-copy twp_diff_review_dracula.png              diff-review.png
-copy twp_now_playing_bar.png                  now-playing.png
-copy twp_app_line_chart.png                   svg-line-chart.png
-copy kitty_term_palette_gruvbox_dark.png      term-palette-native.png
-copy twp_term_palette_gruvbox_dark.png        term-palette-twp.png
-
-echo "Done. Figures are referenced from RFC.md."
+cp "$RESULTS/kitty_term_palette_gruvbox_dark.png" "$OUT/term-palette-native.png"
+cp "$RESULTS/twp_term_palette_gruvbox_dark.png"   "$OUT/term-palette-twp.png"
+echo "Wrote $OUT/term-palette-{native,twp}.png"

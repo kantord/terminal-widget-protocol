@@ -124,6 +124,32 @@ the hard parts. Keep these threads:
 - The "unknown ⇒ ignore, never fail" rule is _the_ forward-compatibility story;
   invoke it consistently (unknown node type, style prop, header key, version).
 
+## Docs figures & examples pipeline
+
+Figures and worked examples in `RFC.md` are **generated, not hand-pasted**, so
+they can't drift from the implementation:
+
+- Each example is one JSON source in `examples/*.json`. `mdsh` runs `just`
+  recipes from HTML-comment directives
+  (``<!-- `> just example NAME COLS ROWS "THEME"` -->``) and inserts, in place,
+  **the JSON code block + the rendered image** between
+  `<!-- BEGIN mdsh -->`/`<!-- END mdsh -->` sentinels.
+- `twp-render` (in `src/bin/render.rs`) renders a scene to PNG **in-process**
+  (no kitty/Xvfb) — `--in file --cols N --rows N` or `--demo NAME`, plus
+  `--theme`. Pixels equal what the proxy transmits.
+- Recipes: `just example` (JSON + image), `just figure DEMO OUT` (image only,
+  for big scenes), `just docker-hero` (the §1 two-theme table). `just docs` runs
+  mdsh over the whole file.
+- **Regenerate with `just docs`** after editing an example or a demo. Keep
+  `examples/*.json` in dprint's json style (prek does this) so the embedded copy
+  matches and dprint/mdsh don't ping-pong.
+- The single exception is the native-ANSI-vs-`term()` figure (§8.2): its left
+  half is the terminal's own rendering, so it needs the kitty harness
+  (`scripts/gen-figures.sh`), not `twp-render`.
+- Image _pixels_ are font/rasterizer dependent, so they are regenerated-and-
+  committed, not verified in CI. The JSON blocks are deterministic and could be
+  `mdsh --frozen`-checked.
+
 ## Voice
 
 Precise, concise, technical. Concrete examples and tables over abstraction.

@@ -16,9 +16,17 @@ rendering configuration, but can make better use of the space and colors, allowi
 applications to implement features that would otherwise require a native application or a
 web application.
 
-A declarative, structured format allows for rich customization of the terminal's built-in
-rendering pipeline and interaction loop, albeit the included experimental polyfill proves the viability of implementing many of TWP's features in a separate module, as long as that module has
-enough information about how the terminal is going to render text.
+A declarative, structured format drives the terminal's built-in rendering — and a TWP scene
+can describe slightly more than appearance. Nodes may also carry *semantic intent* that the
+terminal hands to its own accessibility and input handling: marking a run of text as decorative
+so a screen reader skips it, or marking a node as a button so assistive software can announce it
+as a clickable region — while the application still handles the actual click through whatever
+mechanism it already uses. TWP supplies the *meaning*; the terminal and the application keep
+ownership of behavior.
+
+The included experimental polyfill proves the viability of implementing many of TWP's features
+in a separate module, as long as that module has enough information about how the terminal is
+going to render text.
 
 This RFC is heavily inspired by and actively builds upon the success of pre-existing work
 in this area, especially Kitty's Terminal graphics protocol (https://sw.kovidgoyal.net/kitty/graphics-protocol/), which the polyfill relies on. TWP, however has a structured, text-based format, better 

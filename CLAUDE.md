@@ -54,8 +54,20 @@ The tone is "here is a natural next layer that lets these pieces compose," not
 
 - **KGP (Kitty graphics protocol) is the polyfill's display backend, NOT part of
   TWP.** TWP does not depend on it; a native renderer paints directly and need not
-  involve KGP. Never write "TWP uses KGP." (Conceptually KGP is the imperative
-  pixel layer *below* TWP's declarative document layer — canvas vs. HTML/CSS.)
+  involve KGP. Never write "TWP uses KGP." The useful contrast is *imperative
+  pixels vs. a declarative description* — but keep it at that level (see next).
+
+- **Do NOT frame TWP as "HTML/CSS in the terminal," a "document," a "styling
+  language," or a "browser."** That oversells the scope (TWP is a small, bounded
+  vocabulary — a handful of node types and style properties, no scripting/DOM/
+  network) and it actively triggers the terminal-minimalism objection ("they
+  want to put a browser in my terminal"). Frame TWP as a **small, optional,
+  ignorable widget primitive** the terminal can implement a subset of. Address
+  the "don't bloat the terminal" concern directly: it's a standard APC sequence
+  unaware terminals swallow (§4), partial support is fine via "unknown ⇒ ignore"
+  (§10), and it reuses the terminal's existing rendering rather than adding a new
+  subsystem. (Borrowing *concepts* from CSS — flexbox, `color-mix()` — for
+  familiarity is fine; claiming TWP *is* CSS/HTML is not.)
 
 ## Motivation framing
 

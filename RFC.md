@@ -10,18 +10,37 @@
 
 The Terminal Widget Protocol (TWP) is an escape-sequence protocol that lets a
 program render **declarative, themeable widgets** inline in a terminal — flexbox
-layout, real fonts at real sizes, vector graphics, images, gradients, shadows,
+layout, font sizing, vector graphics, images, gradients, shadows,
 and rounded corners — by sending a single JSON scene description wrapped in an
 APC control sequence.
 
-Where the Kitty graphics protocol gives the terminal a *canvas* (here are the
-pixels, place them at this cell), TWP gives it a *document* (here is a widget
-tree; you lay it out and rasterize it). The relationship is intentionally that
-of **HTML/CSS to `<canvas>`**: a declarative layer on top of the imperative
-pixel layer.
+TWP builds directly on the graphics capabilities that the Kitty terminal and
+others have established, and adds a small, optional layer above them. The shift
+is from imperative to declarative: instead of computing the final pixels in the
+application and asking the terminal to place them, the sender hands the terminal
+a compact, bounded *description* — a small widget tree with layout and style —
+and the terminal renders it.
 
-Two properties distinguish TWP from rendering pixels externally and transmitting
-them — and both come from letting the terminal do the drawing:
+This is deliberately **not** an attempt to put a document engine, a styling
+language, or a browser inside the terminal. The vocabulary is intentionally
+small (a handful of node types and style properties, §5–§8) — no scripting, no
+DOM, no network, no general document model — and it is **entirely optional and
+ignorable**: a terminal that wants nothing to do with it skips a standard APC
+sequence and shows nothing (§4), and a terminal that does want it can implement
+as little of it as it likes, because anything unrecognized is dropped (§10). The
+goal is to let the terminal *reuse* rendering machinery it already has, not to
+grow a new subsystem.
+
+The point of describing a scene and running it through the terminal's *own*
+rendering engine — rather than rendering pixels in the application and shipping
+them — is that the terminal already owns the parts that are hard to reproduce
+from outside: the user's fonts, the cell grid, the color theme, the rasterizer,
+and the screen model (selection, reflow, accessibility). A declared scene can
+therefore be drawn to match the terminal exactly, adopt the user's theme, remain
+real selectable text, and adapt to any font or size — and applications stop
+reinventing a renderer, a layout engine, and a theming system apiece. Two
+properties of this approach are worth calling out, and both follow from letting
+the terminal do the drawing:
 
 1. **Cell-native layout.** Sizes are expressed in *monospace cell units*, so a
    widget aligns to the character grid on any terminal regardless of font,
@@ -222,8 +241,10 @@ vocabulary — which is what this document specifies.
   (§3.2) makes it work *now* on any Kitty-graphics-capable terminal, so the
   protocol can be used and evaluated before any terminal adopts it.
 - **Respect accessibility.** This document does **not** yet offer a mature
-  accessibility model — that is acknowledged future work (§13). But accessibility
-  is an explicit goal at three levels: (1) **do no harm** — TWP MUST NOT degrade
+  accessibility model — that is acknowledged future work (§13), and a mature
+  model will most likely emerge only *after* the protocol has been implemented
+  and used in practice, the same way its other open tradeoffs will (§3.4).
+  Accessibility is nonetheless an explicit goal at three levels: (1) **do no harm** — TWP MUST NOT degrade
   the accessibility a terminal already provides; (2) **handle the easy wins the
   proposal itself creates** — because a scene carries real text (`text` / `mono`
   nodes) rather than only pixels, a native renderer can keep that text selectable
@@ -235,6 +256,12 @@ vocabulary — which is what this document specifies.
 
 **Non-Goals (Phase 1)**
 
+- **Not a browser, document engine, or styling language for the terminal.** The
+  node and style vocabulary is deliberately small and bounded (§5–§8); there is
+  no scripting, no DOM, no networking, and no general document model. The intent
+  is a focused widget primitive, not an open-ended platform — and a terminal may
+  implement only a subset, since "unknown ⇒ ignore" (§10) caps the cost of
+  partial support.
 - Not a general GUI toolkit (no event model, no focus).
 - **No renderer-owned animation** in this first iteration: there is no keyframe
   or timeline model that the renderer drives. An application updates or animates
@@ -677,9 +704,9 @@ forward-compatibility story and applies uniformly at every layer.
 ## 12. Relationship to Prior Art
 
 - **Kitty graphics protocol.** Conceptually the layer *below* TWP — the
-  imperative pixel/canvas layer to TWP's declarative document. The bundled
-  polyfill uses it as its display backend, but TWP does not require it; `img`
-  source keys deliberately mirror it for portability.
+  imperative pixel layer, where TWP is a declarative description above it. The
+  bundled polyfill uses it as its display backend, but TWP does not require it;
+  `img` source keys deliberately mirror it for portability.
 - **Kitty text-sizing protocol (OSC 66).** TWP's `mono` sizing (`scale`,
   `char-width`, `subscale`) mirrors it, generalized into a layout context.
 - **Sixel / iTerm2 inline images.** Alternative pixel-display primitives; TWP

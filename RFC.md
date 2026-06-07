@@ -1,6 +1,6 @@
 # Terminal Widget Protocol (TWP) — Draft RFC
 
-**Status:** Early proposol, polyfill, no production implementation. **Version:**
+**Status:** Early proposal, polyfill, no production implementation. **Version:**
 Protocol `v=1` (Phase 1)
 
 ---
@@ -12,7 +12,7 @@ emulators that allows programs to present widgets that precisely fit into the
 terminal's monospace grid, typographic configuration, color scheme, and
 user-interaction patterns.
 
-TWP allows propgrams to utilize graphical widgets that respect the terminal's
+TWP allows programs to utilize graphical widgets that respect the terminal's
 particular rendering configuration, but can make better use of the space and
 colors, allowing CLI/TUI applications to implement features that would otherwise
 require a native application or a web application.
@@ -31,11 +31,11 @@ TWP's features in a separate module, as long as that module has enough
 information about how the terminal is going to render text.
 
 This RFC is heavily inspired by and actively builds upon the success of
-pre-existing work in this area, especially Kitty's Terminal graphics protocol
+pre-existing work in this area, especially the Kitty graphics protocol
 (https://sw.kovidgoyal.net/kitty/graphics-protocol/), which the polyfill relies
-on. TWP, however has a structured, text-based format, better suited for
-user-interfaces because it communicates intent to the terminal - rather than raw
-pixels - which allows the terminal's renderer to take control of the right
+on. TWP, however, has a structured, text-based format, better suited for user
+interfaces because it communicates intent to the terminal — rather than raw
+pixels — which allows the terminal's renderer to take control of the right
 details such as monospace cell size or color settings.
 
 To understand exactly what TWP is designed to be, it's important to distinguish
@@ -57,7 +57,7 @@ it from the following things:
 TWP lets applications express layouts in monospace cells, which means that
 layouts can be measured in characters, and making them line up with "raw text"
 is a matter of counting characters. Typography is inherited from the terminal,
-and so is the color scheme. However, TWP widgets can derive adjusted colors form
+and so is the color scheme. However, TWP widgets can derive adjusted colors from
 the built-in terminal colors, thus allowing for more legible text and cleaner
 structure while also fitting neatly into the user's theme.
 
@@ -386,15 +386,20 @@ A TWP message is a single ECMA-48 **Application Program Command (APC)**:
 ESC _  twp;<header>;<payload>  ESC \
 ```
 
-- `ESC _` (`0x1B 0x5F`) — APC introducer. The 8-bit form (`0x9F`) MAY be
-  accepted; senders SHOULD emit the 2-byte form for 7-bit/UTF-8 safety.
+- `ESC _` (`0x1B 0x5F`) — APC introducer. Senders MUST emit this 2-byte form,
+  and renderers MUST NOT treat the 8-bit C1 byte `0x9F` as an introducer: it is
+  a common UTF-8 continuation byte (e.g. in `ß`, `ş`), so scanning for it would
+  corrupt the framing of ordinary multilingual text.
 - `twp;` — the TWP namespace prefix. A renderer dispatches only APC sequences
   beginning with this prefix; all other APCs pass through untouched.
 - `<header>` — comma-separated `key=value` control fields (§4.2).
-- `;` — separates header from payload.
+- `;` — separates header from payload. The header extends to the **first** `;`;
+  everything after it is the payload (which may itself contain `;`). The header
+  therefore MUST NOT contain a `;`.
 - `<payload>` — a single compact (single-line) JSON document (§4.3).
-- `ESC \` (`0x1B 0x5C`, ST) — string terminator. The 8-bit form (`0x9C`) MAY be
-  accepted.
+- `ESC \` (`0x1B 0x5C`, ST) — string terminator. Senders MUST emit this 2-byte
+  form; renderers MUST NOT treat the 8-bit C1 byte `0x9C` as a terminator, for
+  the same UTF-8 reason.
 
 Because APC content is opaque to the terminal, a terminal that does not
 implement TWP swallows the entire sequence and displays nothing — TWP's baseline
@@ -419,9 +424,12 @@ Example header: `twp;v=1,c=40,r=6;`
 
 ### 4.3 Payload (JSON)
 
-The payload is a compact JSON object. Compact (no raw newlines; control
-characters `\u`-escaped) JSON is APC-safe by construction — it can contain no
-raw `ESC` — so it rides the APC channel verbatim with no further encoding.
+The payload MUST be a single **UTF-8-encoded, compact (single-line) JSON
+object**, with all control characters U+0000–U+001F `\u`-escaped (as standard
+JSON encoders do). So encoded, the payload contains no raw `ESC` and no raw
+newline — which is exactly what makes it APC-safe and lets it ride the channel
+verbatim with no further encoding. (A renderer MUST NOT scan a UTF-8 payload for
+the bare 8-bit bytes `0x9C`/`0x9F`; see §4.1.)
 
 Top-level keys:
 
@@ -624,11 +632,11 @@ border).
 
 On `mono` nodes (mirroring the Kitty text-sizing protocol):
 
-| Key                         | Meaning                                                    |
-| --------------------------- | ---------------------------------------------------------- |
-| `scale`                     | Each glyph occupies a `scale × scale` block of cells.      |
-| `char-width`                | Cells per glyph horizontally.                              |
-| `subscale-n` / `subscale-d` | Glyph drawn at `n/d` of the cell block (a finer sub-grid). |
+| Key                         | Meaning                                                                                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `scale`                     | Each glyph occupies a `scale × scale` block of cells.                                                                                                                                            |
+| `char-width`                | Cells per glyph horizontally.                                                                                                                                                                    |
+| `subscale-n` / `subscale-d` | Glyph drawn at `n/d` of the cell block (a finer sub-grid). `subscale` only _shrinks_: `n` is clamped to `≤ d`, and `d` MUST be `> 0` (a `0` or absent `d` renders the glyph at full block size). |
 
 ### 7.5 The passthrough rule
 
@@ -723,8 +731,8 @@ the cell-unit system (§7.3) ensures internal elements align to the same grid.
 **Coexistence (informative).** In the polyfill, a placeholder-image widget and
 ordinary printed text do not currently share the same screen region cleanly;
 widgets are best placed in regions the application manages as widget real
-estate. A tighter cell-by-cell coexistence model (analogous to
-`ratatouille-image`) is future work (§11).
+estate. A tighter cell-by-cell coexistence model (analogous to `ratatui-image`)
+is future work (§13).
 
 ---
 
@@ -735,7 +743,7 @@ TWP degrades at three levels:
 1. **Wrapper-unaware terminal.** Any terminal that does not implement TWP
    swallows the APC (standard ECMA-48 behavior) and shows nothing. (An optional
    sender-supplied plain-text rendering printed _outside_ the APC could let such
-   terminals show a fallback; see §11.)
+   terminals show a fallback; see §13.)
 2. **Unknown node type.** Rendered as nothing; the rest of the scene renders
    (§5.8).
 3. **Unknown style property / value.** Dropped; the rest of the style applies
@@ -785,14 +793,26 @@ forward-compatibility story and applies uniformly at every layer.
 - **CSS / flexbox / SVG.** TWP's style and layout semantics are intentionally a
   subset of CSS, so the model is familiar and the passthrough rule (§7.5) can
   borrow the rasterizer's full CSS engine.
-- **TUI frameworks (ratatouille, etc.).** TWP is complementary: a TUI could emit
-  a TWP scene for a region instead of (or alongside) cell characters, gaining
+- **TUI frameworks (ratatui, etc.).** TWP is complementary: a TUI could emit a
+  TWP scene for a region instead of (or alongside) cell characters, gaining
   sub-cell rendering while keeping the cell grid as the coordinate system.
 
 ---
 
 ## 13. Open Questions & Future Work
 
+- **Terminal multiplexers.** tmux/screen sit between the application and the
+  terminal and historically do not forward unknown escape sequences reliably.
+  TWP rides standard APC, which a multiplexer _should_ pass through unchanged
+  under the same "unknown ⇒ ignore" principle — and an unaware multiplexer that
+  swallows it degrades safely (no corruption). In practice, passthrough of APC,
+  and of the polyfill's KGP backend, through tmux/screen is a known, unsolved
+  problem shared by _all_ terminal-graphics protocols, and is not something TWP
+  can fix unilaterally. Two forward-looking notes: a multiplexer can already
+  forward sequences explicitly (e.g. tmux's passthrough mode); and because a TWP
+  message is a _declarative description_ rather than opaque pixels, a TWP-aware
+  multiplexer could place and reflow widgets across panes far better than it can
+  with bitmap protocols. Deferred; honestly unsolved for now.
 - **Chunking.** Large payloads (image-bearing scenes) may exceed terminal APC
   length limits. A continuation mechanism (à la Kitty's `m=1`) is the main
   realistic addition; deferred until needed.

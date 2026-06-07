@@ -17,11 +17,13 @@ pub struct Payload {
 
 /// A node in the widget tree.
 ///
-/// Phase 1 primitives:
-///   * `n = "box"`     — container
-///   * `n = "text"`    — text run (string in `t`)
-///   * `n = "$param"`  — placeholder, substituted from enclosing $call's props
-///   * `n = "$<name>"` — invocation of a component registered in `Payload::defs`
+/// Phase 1 node types (`n`):
+///   * `flex` — flexbox container · `box` — block container
+///   * `text` — proportional text · `mono` — monospace-grid text (string in `t`)
+///   * `svg` — inline vector (markup in `t`) · `img` — bitmap (see `img`)
+///   * `stack` — z-layered overlay
+///   * `$param` — placeholder filled from the enclosing `$<name>` call's props
+///   * `$<name>` — invocation of a component registered in `Payload::defs`
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct Node {
     pub n: String,

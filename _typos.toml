@@ -8,3 +8,4 @@ extend-exclude = ["twp-proxy/rowcolumn-diacritics.txt"]
 [default.extend-words]
 # `mch` = monospace cell height — a TWP unit, not a misspelling of "much".
 mch = "mch"
+ratatui = "ratatui"

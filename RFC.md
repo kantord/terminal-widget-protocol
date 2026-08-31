@@ -17,14 +17,13 @@ particular rendering configuration, but can make better use of the space and
 colors, allowing CLI/TUI applications to implement features that would otherwise
 require a native application or a web application.
 
-A declarative, structured format drives the terminal's built-in rendering — and
-a TWP scene can describe slightly more than appearance. Nodes may also carry
-_semantic intent_ that the terminal hands to its own accessibility and input
-handling: marking a run of text as decorative so a screen reader skips it, or
-marking a node as a button so assistive software can announce it as a clickable
-region — while the application still handles the actual click through whatever
-mechanism it already uses. TWP supplies the _meaning_; the terminal and the
-application keep ownership of behavior.
+A declarative, structured format drives the terminal's built-in rendering. TWP
+scenes are a small, bounded vocabulary of nodes and style properties — no
+scripting, no DOM, no networking. Because a scene carries real text (`text` /
+`mono` nodes) rather than only pixels, a native renderer can keep that text
+selectable and exposed to assistive technology, and the declarative tree is the
+natural place to later attach semantic roles and labels. TWP supplies the
+_meaning_; the terminal and the application keep ownership of behavior.
 
 The included experimental polyfill proves the viability of implementing many of
 TWP's features in a separate module, as long as that module has enough
@@ -66,9 +65,9 @@ that do not implement it silently ignore TWP messages.
 
 The implementation bundled with this document is a **polyfill** (§3.2): it makes
 TWP work on the Kitty terminal and allows experimenting with the protocol, but
-it is not production-ready, not a 100% correct implementation of the protocol
-and is largely vibe-coded for testing and demonstration purposes, so you should
-only use it at your own risk, and at the cost of your own patience.
+it is not production-ready, is not a fully conformant renderer, and exists for
+testing and demonstration. In particular, proportional `text` (§5.3) and some
+effects (§7.5) are deferred in it.
 
 ---
 
@@ -274,15 +273,16 @@ declarative vocabulary — which is what this document specifies.
   model will most likely emerge only _after_ the protocol has been implemented
   and used in practice, the same way its other open tradeoffs will (§3.4).
   Accessibility is nonetheless an explicit goal at three levels: (1) **do no
-  harm** — TWP MUST NOT degrade the accessibility a terminal already provides;
-  (2) **handle the easy wins the proposal itself creates** — because a scene
-  carries real text (`text` / `mono` nodes) rather than only pixels, a native
-  renderer can keep that text selectable and exposed to assistive technology
-  instead of flattening it into an unreadable image; and (3) **be a substrate
-  for future accessibility** — the declarative tree is the natural place to
-  later attach semantic roles, labels, and alternative text. (The bundled
-  polyfill, rendering to images, does not yet realize level 2; only native
-  integration does — §3.3.)
+  harm** — a renderer MUST NOT remove accessibility from content it did not
+  itself render (e.g. it must not turn previously-selectable terminal text into
+  an opaque image); (2) **handle the easy wins the proposal itself creates** —
+  because a scene carries real text (`text` / `mono` nodes) rather than only
+  pixels, a native renderer can keep that text selectable and exposed to
+  assistive technology instead of flattening it into an unreadable image; and
+  (3) **be a substrate for future accessibility** — the declarative tree is the
+  natural place to later attach semantic roles, labels, and alternative text.
+  (The bundled polyfill, rendering to images, does not yet realize level 2; only
+  native integration does — §3.3.)
 
 ### Non-Goals (Phase 1)
 
@@ -338,9 +338,17 @@ appears (§9). It queries the terminal for the cell size and palette it needs.
 Its job is to let people **use and evaluate TWP today**, on terminals that have
 never heard of it. It is explicitly **not normative**: nothing about its
 architecture (an out-of-band rasterizer, a specific graphics-protocol backend, a
-particular CSS/SVG engine) is prescribed by this document, and it is not
+particular rasterization engine) is prescribed by this document, and it is not
 optimized for production. Treat it as a working sketch of the protocol's
 _behavior_, not a specification of how a terminal should implement it.
+
+One architectural note: because every Phase 1 node has a grid-determined or
+explicitly-sized footprint, the polyfill **lays the scene out itself** — flexbox
+over cell units, with `mono` glyphs positioned arithmetically (no recursive text
+measurement) — and rasterizes the emitted vector description to a PNG. This is
+why proportional `text` is deferred (§5.3, §13): it is the one node that would
+need measurement. A native terminal may lay out the same way or differently;
+only the wire format and behavior are normative.
 
 ### 3.3 The intended implementation: native integration
 
@@ -418,7 +426,10 @@ does not support the declared `v` MUST ignore the message.
 
 `c` and `r` declare the widget's **cell footprint** — the rectangle of character
 cells the rendered image will occupy. They let the renderer reserve grid space
-and size the output without parsing the payload.
+and size the output without parsing the payload. A sender MUST include `c` and
+`r`; a renderer MAY assume a sensible default footprint (the polyfill uses 20×4)
+if they are absent, and MUST treat a missing `v` as `v=1`. The polyfill's
+leniency here is a non-normative liberty, not a required behavior.
 
 Example header: `twp;v=1,c=40,r=6;`
 
@@ -482,6 +493,15 @@ dots — anything that is "a rectangle with style."
 A run of text (`t`) rendered in a **proportional** font at `font-size`. For
 prose, headings, captions — content that is _not_ meant to align to the cell
 grid.
+
+**Phase 1 status (informative).** `text` is the one node whose size is not
+grid-determined: each glyph has its own advance width, so laying one out
+requires measuring and wrapping the text — in contrast to `mono`, where every
+glyph occupies a fixed cell block (§7.4) and needs no measurement. `text` is
+therefore an **optional** Phase 1 node: a renderer MAY implement it, and a
+renderer that does not MAY render a `text` node as a styled `mono` run or drop
+it under the §10 degradation rules. The node type remains part of the
+vocabulary, but nothing in Phase 1 mandates proportional shaping. (See §13.)
 
 ### 5.4 `mono` — monospace-grid text
 
@@ -590,8 +610,9 @@ Consequently a `border` is painted at the node's edge and **does not displace
 its content** — a 1px border never nudges the glyphs inside it off the grid,
 whatever the axis. Content leaves the cell grid only when the author explicitly
 asks for it with a sub-cell `px` value. (How a renderer realises non-displacing
-paint is its own affair — the polyfill, for instance, draws the typed `border`
-as a CSS `outline`; §3.)
+paint is its own affair — the polyfill, for instance, paints the typed `border`
+as an SVG edge stroke _after_ layout, so it sits on top of the box and never
+shifts content; §3.2.)
 
 ### 7.1 Layout (on `flex`)
 
@@ -614,11 +635,18 @@ so the bar stays aligned at any font size._
 `width`, `height`, `border-radius` take a **length** (§7.3). `gap` and `padding`
 likewise.
 
-Visual paint keys — `background`, `color`, `border-radius`, and `border`
-(`{ "width": <px>, "color": <color §8> }`, a solid edge) — colour the node and,
-per §7's grid-stability rule, never change its layout. A `border`'s `width` is
-in pixels (a hairline is 1 device pixel on every terminal); it is painted at the
-edge and may bleed outward, but does not displace the node's content.
+Visual paint keys — `background`, `color`, `border-radius`, `opacity`, and
+`border` (`{ "width": <px>, "color": <color §8> }`, a solid edge) — colour the
+node and, per §7's grid-stability rule, never change its layout. A `border`'s
+`width` is in pixels (a hairline is 1 device pixel on every terminal); it is
+painted at the edge and may bleed outward, but does not displace the node's
+content. `opacity` is a number in 0–1 that fades the node's paint.
+
+**Text keys.** `font-size` (px), `font-weight` (`"normal"`, `"bold"`, or a
+number 100–900), and `text-align` (`left`|`center`|`right`) style text nodes. In
+Phase 1 these apply to the grid-sized `mono`/`text` runs; `font-weight` selects
+the bold face and `text-align` is meaningful where the run occupies more width
+than its glyphs.
 
 ### 7.3 Lengths and cell units
 
@@ -630,6 +658,11 @@ A length is either a bare number (**pixels**) or a string with a unit:
 | `"50%"`  | percent                       | 50% of the parent's corresponding axis       |
 | `"3mcw"` | monospace **cell width** (x)  | `3 · px_per_col`                             |
 | `"2mch"` | monospace **cell height** (y) | `2 · px_per_row`                             |
+
+Percentages resolve against the parent's corresponding axis — most useful for
+`width`/`height`. For `gap`/`padding`/`border-radius` their effect is
+renderer-defined and typically small; when in doubt, prefer cell units for
+spacing.
 
 **Cell units are TWP's native length unit and the key to portability.** The
 character cell is _anisotropic_ (typically ~1:2, taller than wide) and its pixel
@@ -673,13 +706,19 @@ On `mono` nodes (mirroring the Kitty text-sizing protocol):
 
 ### 7.5 The passthrough rule
 
-Any style key not in the typed vocabulary is forwarded to the rasterizer as a
-CSS `property: value` declaration. This is how effects beyond Phase 1's named
-set — `text-shadow`, `opacity`, `box-shadow`, `-webkit-text-stroke`,
-`text-decoration`, `background-image: linear-gradient(...)`, `flex-grow`,
-`aspect-ratio`, etc. — work with no per-property protocol changes. A declaration
-the renderer cannot parse is silently dropped, preserving forward-compatibility.
-`term(...)` colors and cell units are resolved inside passthrough values too.
+A renderer recognizes a small set of **typed** layout and visual keys
+(§7.1–§7.4, plus `flex-grow`, `max-width`, `opacity`, and the text keys in
+§7.2). Any style key **not** in the typed vocabulary is treated as an **effect**
+whose handling is left to the renderer. The bundled polyfill recognizes exactly
+one such effect — `box-shadow` — and drops every other unknown key, preserving
+forward-compatibility. A native renderer may support a broader set; the spec
+requires only that an unknown or unparseable key be **ignored, never fatal**
+(§10). `term(...)` colors and cell units are resolved inside recognized
+passthrough values too.
+
+The vocabulary is intentionally bounded: the core a conformant renderer must
+implement is the typed nodes plus the typed style keys. This is what keeps the
+"small, bounded vocabulary" claim true — there is no unbounded CSS surface.
 
 ---
 
@@ -730,8 +769,9 @@ This expresses _derived_ theme tones — an "added line" tint as the green accen
 mixed lightly into the background, "muted" text as the foreground pulled toward
 the background, elevated surfaces as subtle lifts off `term(bg)`. A complete UI
 can thus derive **every** color from the palette and re-tone itself to any
-theme, light or dark, with no per-theme code. Relative color syntax
-(`rgb(from term(1) r g b / .3)`) is likewise accepted.
+theme, light or dark, with no per-theme code. (Relative color syntax such as
+`rgb(from term(1) r g b / .3)` is not implemented by the bundled polyfill and is
+left to renderers.)
 
 ### 8.4 `currentColor` (SVG)
 
@@ -824,8 +864,8 @@ forward-compatibility story and applies uniformly at every layer.
 - **Sixel / iTerm2 inline images.** Alternative pixel-display primitives; TWP
   could target them as display backends.
 - **CSS / flexbox / SVG.** TWP's style and layout semantics are intentionally a
-  subset of CSS, so the model is familiar and the passthrough rule (§7.5) can
-  borrow the rasterizer's full CSS engine.
+  subset of CSS, so the model is familiar and the passthrough rule (§7.5) keeps
+  the vocabulary bounded rather than importing a full CSS engine.
 - **TUI frameworks (ratatui, etc.).** TWP is complementary: a TUI could emit a
   TWP scene for a region instead of (or alongside) cell characters, gaining
   sub-cell rendering while keeping the cell grid as the coordinate system.
@@ -834,6 +874,15 @@ forward-compatibility story and applies uniformly at every layer.
 
 ## 13. Open Questions & Future Work
 
+- **Proportional text.** `text` nodes (§5.3) are the only nodes whose size is
+  not determined by the grid — each glyph has its own advance width — so laying
+  one out requires measuring and wrapping proportional text. This is the single
+  place the "cell units ⇒ no measurement" property does not hold, and it is why
+  the bundled polyfill renders `text` as a monospace run today. Phase 1 treats
+  `text` as optional (§5.3). A future revision could add a defined
+  proportional-text layout (advance-width measurement and wrapping) to the core,
+  or standardize a fallback such as rendering `text` as a `mono` run; a simpler
+  polyfill that lays scenes out itself defers proportional text accordingly.
 - **Terminal multiplexers.** tmux/screen sit between the application and the
   terminal and historically do not forward unknown escape sequences reliably.
   TWP rides standard APC, which a multiplexer _should_ pass through unchanged

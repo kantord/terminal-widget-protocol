@@ -1,36 +1,43 @@
-// Converts an expanded protocol::Node tree into a takumi node tree and
-// renders it to a PNG.
+// Renders an expanded protocol::Node tree to a PNG.
 //
-// Phase 1 style vocabulary is hand-mapped onto takumi's StyleDeclaration
-// API. Anything outside the documented vocabulary is silently dropped.
+// The polyfill lays the scene out *itself* and rasterizes the result with
+// resvg — it does not drive a general-purpose CSS/text-shaping engine. This is
+// possible because every TWP node has a grid-determined (mono, box, flex) or
+// explicitly-sized (svg, img) footprint, so no recursive text measurement is
+// needed:
+//
+//   * `mono` / `text` — each glyph occupies a fixed cell block, so positions
+//     are pure arithmetic (`col * cell_w`), with no font-advance measurement.
+//   * `flex` / `box` / `stack` — sized by explicit width/height/gap/padding/
+//     flex-grow against a known parent (taffy flexbox).
+//   * `svg` / `img` — explicit width/height.
+//
+// Layout is computed with taffy (all-definite leaf sizes, no measure
+// callbacks), the tree is emitted as an SVG with absolutely-positioned
+// elements, and resvg rasterizes it to PNG. This is the same picture the proxy
+// transmits via the Kitty graphics protocol.
+//
+// Because the polyfill paints borders as SVG edge strokes *after* layout, a
+// border never displaces a node's content or siblings — the grid-stability
+// invariant the spec (§7) describes.
+//
+// Proportional `text` (wrapping prose in a sans-serif face) is deferred: a
+// `text` node renders as a monospace run in the polyfill. See §13 of the spec.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use image::RgbaImage;
-use parley::{FontFeature, setting::Tag};
-use takumi::{
-    GlobalContext,
-    layout::{
-        Viewport,
-        node::{ImageData, Node as TakumiNode},
-        style::{
-            AlignItems, Color, ColorInput, Display, FlexDirection, FontFamily, FontSize,
-            FontWeight as TkFW, FromCss, JustifyContent, Length, LengthDefaultsToZero, SpacePair,
-            Style as TkStyle, StyleDeclaration, StyleDeclarationBlock, TextAlign,
-        },
-    },
-    rendering::{ImageOutputFormat, RenderOptions, measure_layout, render, write_image},
-    resources::{
-        font::FontResource,
-        image::{ImageSource, SvgSource},
-    },
-};
+use taffy::geometry::Size;
+use taffy::style::AvailableSpace;
+use taffy::style::Dimension;
+use taffy::style::LengthPercentage;
+use taffy::style::LengthPercentageAuto;
+use taffy::style::Position;
+use taffy::{AlignItems, Display, FlexDirection, JustifyContent, NodeId, TaffyTree};
 
-use crate::protocol::{Dimension, FontWeight, Img, Node};
+use crate::protocol::{Border, Dimension as TDimension, FontWeight, Img, Node};
 
 /// Fallback render resolution per cell when the terminal doesn't report
 /// pixel dimensions via TIOCGWINSZ.
@@ -60,8 +67,7 @@ pub(crate) fn px_per_row() -> u32 {
 // `term(bg)`, and `term(0..255)` — resolved against the palette below.
 // The proxy queries the real terminal (OSC 4 / 10 / 11) at startup and
 // installs it via `set_palette`; absent that (library use, tests), a
-// standard xterm default is used. `transparent` (a normal CSS keyword)
-// lets the terminal background show through, no query needed.
+// standard xterm default is used.
 
 /// The 16 ANSI colors + default fg/bg + the computed 256-color palette.
 #[derive(Clone, Copy)]
@@ -136,9 +142,9 @@ pub(crate) fn resolve_term(s: &str) -> Option<[u8; 3]> {
     }
 }
 
-/// Replace every `term(...)` token in a CSS/SVG value string with its `#rrggbb`
-/// equivalent. The token is self-delimiting, so this is a safe substitution in
-/// any color-bearing value without parsing the surrounding CSS.
+/// Replace every `term(...)` token in a string with its `#rrggbb` equivalent.
+/// The token is self-delimiting, so this is a safe substitution in any
+/// color-bearing value without parsing the surrounding CSS/SVG.
 pub(crate) fn substitute_term(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut rest = value;
@@ -164,59 +170,129 @@ pub(crate) fn substitute_term(value: &str) -> String {
     out
 }
 
-/// Resolve `m`-cell units (`3mcw`, `0.5mch`) embedded in a CSS *value* string to
-/// pixels, so they work in the passthrough path too (not just the typed
-/// `width`/`height`/`gap`/`padding` fields). Anything that isn't
-/// `<number><cell-unit>` is copied through untouched.
-pub(crate) fn substitute_cell_units(value: &str) -> String {
-    let pc = px_per_col() as f32;
-    let pr = px_per_row() as f32;
-    let units: [(&str, f32); 2] = [("mcw", pc), ("mch", pr)];
-    let b = value.as_bytes();
-    let mut out = String::with_capacity(value.len());
-    let mut i = 0;
-    let mut copied = 0; // bytes [copied..) not yet flushed to `out`
-    while i < b.len() {
-        let starts_num =
-            b[i].is_ascii_digit() || (b[i] == b'.' && i + 1 < b.len() && b[i + 1].is_ascii_digit());
-        if !starts_num {
-            i += 1;
-            continue;
-        }
-        let num_start = i;
-        let mut j = i;
-        while j < b.len() && (b[j].is_ascii_digit() || b[j] == b'.') {
-            j += 1;
-        }
-        let rest = &value[j..];
-        let mut matched = false;
-        for (suffix, mult) in units {
-            let Some(after) = rest.strip_prefix(suffix) else {
-                continue;
-            };
-            // The unit must end at a non-alphanumeric boundary (so we don't
-            // rewrite the `mcw` inside a hypothetical `3mcworld`).
-            let boundary = after
-                .as_bytes()
-                .first()
-                .is_none_or(|c| !c.is_ascii_alphanumeric());
-            if boundary {
-                if let Ok(n) = value[num_start..j].parse::<f32>() {
-                    out.push_str(&value[copied..num_start]);
-                    out.push_str(&format!("{}px", n * mult));
-                    i = j + suffix.len();
-                    copied = i;
-                    matched = true;
-                    break;
-                }
-            }
-        }
-        if !matched {
-            i = j; // leave the bare number for the next bulk copy
+/// An RGBA color in 0..=255 space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Rgba {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+    pub a: u8,
+}
+
+impl Rgba {
+    fn opaque(r: u8, g: u8, b: u8) -> Self {
+        Rgba { r, g, b, a: 255 }
+    }
+    fn to_css(self) -> String {
+        if self.a == 255 {
+            format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+        } else {
+            format!(
+                "rgba({},{},{},{:.3})",
+                self.r,
+                self.g,
+                self.b,
+                self.a as f32 / 255.0
+            )
         }
     }
-    out.push_str(&value[copied..]);
-    out
+}
+
+/// Resolve a color value (hex, `term(...)`, `transparent`, `currentColor`,
+/// `color-mix(...)`) to an RGBA. Returns None for anything unrecognized, so
+/// the property is dropped rather than crashing.
+fn resolve_color(s: &str) -> Option<Rgba> {
+    let s = substitute_term(s.trim());
+    if s.eq_ignore_ascii_case("transparent") {
+        return Some(Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        });
+    }
+    if s.eq_ignore_ascii_case("currentcolor") {
+        return None; // only meaningful inside SVG markup, handled there
+    }
+    if let Some(hex) = s.strip_prefix('#') {
+        let (r, g, b, a) = match hex.len() {
+            3 => {
+                let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+                let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+                let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+                (r * 17, g * 17, b * 17, 255)
+            }
+            6 => (
+                u8::from_str_radix(&hex[0..2], 16).ok()?,
+                u8::from_str_radix(&hex[2..4], 16).ok()?,
+                u8::from_str_radix(&hex[4..6], 16).ok()?,
+                255,
+            ),
+            8 => (
+                u8::from_str_radix(&hex[0..2], 16).ok()?,
+                u8::from_str_radix(&hex[2..4], 16).ok()?,
+                u8::from_str_radix(&hex[4..6], 16).ok()?,
+                u8::from_str_radix(&hex[6..8], 16).ok()?,
+            ),
+            _ => return None,
+        };
+        return Some(Rgba { r, g, b, a });
+    }
+    resolve_color_mix(&s)
+}
+
+/// Parse and resolve `color-mix(in srgb, C1 p1%, C2 p2%)`. Percentages that
+/// are omitted are filled so the pair sums to 100% (both omitted ⇒ 50/50).
+fn resolve_color_mix(s: &str) -> Option<Rgba> {
+    let inner = s
+        .strip_prefix("color-mix(in srgb,")?
+        .strip_suffix(')')?
+        .trim();
+    let mut parts = inner.split(',').map(|p| p.trim()).filter(|p| !p.is_empty());
+    let a = parts.next()?.trim().to_string();
+    let b = parts.next()?.trim().to_string();
+    let (c1, p1) = split_pct(&a);
+    let (c2, p2) = split_pct(&b);
+    let c1 = resolve_color(&c1)?;
+    let c2 = resolve_color(&c2)?;
+    let (p1, p2) = match (p1, p2) {
+        (Some(x), Some(y)) => (x, y),
+        (Some(x), None) => (x, 100.0 - x),
+        (None, Some(y)) => (100.0 - y, y),
+        (None, None) => (50.0, 50.0),
+    };
+    let f1 = (p1 / 100.0).clamp(0.0, 1.0);
+    let f2 = (p2 / 100.0).clamp(0.0, 1.0);
+    let total = f1 + f2;
+    if total <= 0.0 {
+        return Some(c2);
+    }
+    // Interpolate in sRGB, weighting by the declared percentages (renormalized
+    // to sum to 1).
+    let w1 = f1 / total;
+    let w2 = f2 / total;
+    let lerp = |a: u8, b: u8| (a as f32 * w1 + b as f32 * w2).round() as u8;
+    // Alpha: CSS color-mix composites over the result; a simple weighted
+    // average is close enough for a polyfill.
+    Some(Rgba {
+        r: lerp(c1.r, c2.r),
+        g: lerp(c1.g, c2.g),
+        b: lerp(c1.b, c2.b),
+        a: (c1.a as f32 * w1 + c2.a as f32 * w2).round() as u8,
+    })
+}
+
+/// Split a `color-mix` argument into (color, optional percentage).
+fn split_pct(s: &str) -> (String, Option<f32>) {
+    let s = s.trim();
+    if let Some(rest) = s.strip_suffix('%')
+        && let Some(idx) = rest.rfind(' ')
+    {
+        let color = rest[..idx].trim().to_string();
+        let pct = rest[idx + 1..].trim().parse().ok();
+        return (color, pct);
+    }
+    (s.to_string(), None)
 }
 
 /// Final-fallback font paths if every other discovery mechanism fails.
@@ -230,137 +306,61 @@ const FONT_PROBE: &[&str] = &[
     "/System/Library/Fonts/Monaco.ttf",
 ];
 
-/// Unique family names per weight/style — we force parley to pick the
-/// exact file by never asking it to do weight-matching. Crude but
-/// guaranteed to match the terminal's font selection (which also has
-/// one explicit file per variant).
-const FAMILY_REGULAR: &str = "twp-r";
-const FAMILY_BOLD: &str = "twp-b";
-const FAMILY_ITALIC: &str = "twp-i";
-const FAMILY_BOLD_ITALIC: &str = "twp-bi";
-
-/// Optional proportional (sans-serif) family. Unlike the terminal mono font,
-/// this is only used when a node explicitly asks for it via
-/// `font-family: twp-sans` / `twp-sans-b` (e.g. the Markdown demo's prose and
-/// headings, where mono looks wrong). Registered best-effort from
-/// `fc-match sans-serif`; absent it, parley falls back to a system face.
-pub const FAMILY_SANS: &str = "twp-sans";
-pub const FAMILY_SANS_BOLD: &str = "twp-sans-b";
-
 #[derive(Debug, Default)]
 struct FontSet {
     regular: Option<std::path::PathBuf>,
-    bold: Option<std::path::PathBuf>,
-    italic: Option<std::path::PathBuf>,
-    bold_italic: Option<std::path::PathBuf>,
 }
 
-/// Best-effort font discovery:
-///   1. `TWP_FONT_PATH` env override (regular only).
-///   2. Kitty config: regular + bold + italic + bold_italic.
-///   3. `fc-match monospace` for regular.
+/// Best-effort monospace font discovery (independent of any rendering engine):
+///   1. `TWP_FONT_PATH` env override.
+///   2. Kitty config `font_family`.
+///   3. `fc-match monospace`.
 ///   4. `FONT_PROBE` paths.
 fn discover_fonts() -> FontSet {
     if let Ok(p) = std::env::var("TWP_FONT_PATH") {
         return FontSet {
             regular: Some(std::path::PathBuf::from(p)),
-            ..FontSet::default()
         };
     }
-    if std::env::var("KITTY_WINDOW_ID").is_ok() {
-        let kitty = read_kitty_fonts();
-        if let Some(reg) = kitty.regular.clone() {
-            // Kitty's `auto`/`none` for bold_font/italic_font are *directives*
-            // ("derive from font_family"), not real font names. Passing them to
-            // fc-match yields a proportional fallback (e.g. Noto Sans), which
-            // wrecks the monospace grid for bold/italic mono text. So resolve
-            // those slots from the regular family with a fontconfig style query
-            // instead, getting the matching *monospace* face.
-            let variant = |slot: Option<&str>, style: &str| -> Option<std::path::PathBuf> {
-                match slot {
-                    Some(v)
-                        if !matches!(
-                            v.trim().to_ascii_lowercase().as_str(),
-                            "auto" | "none" | ""
-                        ) =>
-                    {
-                        fc_match(v)
-                    }
-                    _ => fc_match(&format!("{reg}:{style}")),
-                }
-            };
-            return FontSet {
-                regular: fc_match(&reg),
-                bold: variant(kitty.bold.as_deref(), "bold"),
-                italic: variant(kitty.italic.as_deref(), "italic"),
-                bold_italic: variant(kitty.bold_italic.as_deref(), "bold:italic"),
-            };
-        }
+    if let Some(reg) = std::env::var("TWP_FONT_FAMILY")
+        .ok()
+        .or_else(read_kitty_family)
+    {
+        return FontSet {
+            regular: fc_match(&reg),
+        };
     }
     if let Some(path) = fc_match("monospace") {
         return FontSet {
             regular: Some(path),
-            bold: fc_match("monospace:bold"),
-            italic: fc_match("monospace:italic"),
-            bold_italic: fc_match("monospace:bold:italic"),
         };
     }
     for p in FONT_PROBE {
         if std::path::Path::new(p).exists() {
             return FontSet {
                 regular: Some(std::path::PathBuf::from(p)),
-                ..FontSet::default()
             };
         }
     }
     FontSet::default()
 }
 
-#[derive(Debug, Default)]
-struct KittyFonts {
-    regular: Option<String>,
-    bold: Option<String>,
-    italic: Option<String>,
-    bold_italic: Option<String>,
-}
-
-fn read_kitty_fonts() -> KittyFonts {
-    let mut fonts = KittyFonts::default();
-    let Some(cfg_dir) = std::env::var("XDG_CONFIG_HOME")
+fn read_kitty_family() -> Option<String> {
+    let cfg_dir = std::env::var("XDG_CONFIG_HOME")
         .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/.config")))
-        .ok()
-    else {
-        return fonts;
-    };
+        .ok()?;
     let path = std::path::Path::new(&cfg_dir).join("kitty/kitty.conf");
-    let Ok(contents) = std::fs::read_to_string(&path) else {
-        return fonts;
-    };
+    let contents = std::fs::read_to_string(path).ok()?;
     for line in contents.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        for key in [
-            "font_family",
-            "bold_font",
-            "italic_font",
-            "bold_italic_font",
-        ] {
-            if let Some(rest) = line.strip_prefix(key) {
-                let value = extract_family(rest.trim());
-                match key {
-                    "font_family" => fonts.regular = Some(value),
-                    "bold_font" => fonts.bold = Some(value),
-                    "italic_font" => fonts.italic = Some(value),
-                    "bold_italic_font" => fonts.bold_italic = Some(value),
-                    _ => {}
-                }
-                break;
-            }
+        if let Some(rest) = line.strip_prefix("font_family") {
+            return Some(extract_family(rest.trim()));
         }
     }
-    fonts
+    None
 }
 
 /// Kitty supports both legacy (`font_family Inter`) and modern
@@ -396,769 +396,684 @@ fn fonts() -> &'static FontSet {
     FS.get_or_init(discover_fonts)
 }
 
-fn context() -> &'static GlobalContext {
-    static CTX: OnceLock<GlobalContext> = OnceLock::new();
-    CTX.get_or_init(|| {
-        let mut ctx = GlobalContext::default();
-        let set = fonts();
-        if set.regular.is_none() {
-            eprintln!(
-                "twp-proxy: no font found via Kitty config, fc-match, or probe paths; \
-                 text widgets will render empty"
-            );
-            return ctx;
-        }
-        // Each variant gets a unique family name — we select the right
-        // one explicitly in build_style rather than relying on parley's
-        // weight-matching (which doesn't reliably pick overridden variants).
-        // The bold/italic slots fall back to the regular face when no real
-        // variant was found. The result may not look bolder, but it stays
-        // monospace — never a proportional fallback that breaks the cell grid.
-        load_variant(
-            &mut ctx,
-            set.regular.as_deref(),
-            FAMILY_REGULAR,
-            false,
-            false,
+/// Build the resvg/usvg options: a font database populated with system fonts
+/// plus the discovered monospace family (so `mono`/`text` glyphs render in a
+/// real monospace face), with that family as the default.
+fn usvg_options() -> usvg::Options<'static> {
+    let mut opt = usvg::Options::default();
+    let db = opt.fontdb_mut();
+    db.load_system_fonts();
+    let family = fonts()
+        .regular
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|bytes| {
+            db.load_font_data(bytes);
+            // The just-loaded font is the last face; ask fontdb for its family.
+            db.faces()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .find(|f| !f.families.is_empty())
+                .and_then(|f| f.families.first().map(|(n, _)| n.clone()))
+        });
+    if let Some(family) = family {
+        opt.font_family = family;
+    } else if fonts().regular.is_none() {
+        eprintln!(
+            "twp-proxy: no monospace font found via Kitty config, fc-match, or probe paths; \
+             text will render with resvg's default face"
         );
-        load_variant(
-            &mut ctx,
-            set.bold.as_deref().or(set.regular.as_deref()),
-            FAMILY_BOLD,
-            true,
-            false,
-        );
-        load_variant(
-            &mut ctx,
-            set.italic.as_deref().or(set.regular.as_deref()),
-            FAMILY_ITALIC,
-            false,
-            true,
-        );
-        load_variant(
-            &mut ctx,
-            set.bold_italic
-                .as_deref()
-                .or(set.bold.as_deref())
-                .or(set.regular.as_deref()),
-            FAMILY_BOLD_ITALIC,
-            true,
-            true,
-        );
-
-        // Proportional family for prose/heading demos — best effort.
-        if let Some(p) = fc_match("sans-serif") {
-            load_variant(&mut ctx, Some(p.as_path()), FAMILY_SANS, false, false);
-        }
-        if let Some(p) = fc_match("sans-serif:bold") {
-            load_variant(&mut ctx, Some(p.as_path()), FAMILY_SANS_BOLD, true, false);
-        }
-        ctx
-    })
+    }
+    opt
 }
 
-fn load_variant(
-    ctx: &mut GlobalContext,
-    path: Option<&std::path::Path>,
-    family_name: &str,
+// ── Layout ─────────────────────────────────────────────────────────
+
+/// Node kinds the layout/emit passes care about.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    /// `flex`, `box`, `stack` — layout containers / styled rects.
+    Container,
+    /// `mono`, `text` — grid text, emitted per-glyph (arithmetic positions).
+    Text,
+    /// `svg` — inline vector markup embedded as an SVG image.
+    Svg,
+    /// `img` — bitmap embedded as an image.
+    Img,
+}
+
+/// Paint-time info for a laid-out node, keyed by its taffy NodeId.
+#[derive(Clone)]
+struct Info {
+    kind: Kind,
+    text: String,
+    color: Rgba,
     bold: bool,
-    italic: bool,
-) {
-    let Some(path) = path else { return };
-    let Ok(bytes) = std::fs::read(path) else {
-        eprintln!("twp-proxy: failed to read {}", path.display());
-        return;
+    font_size: f32,
+    cell_w: f32,
+    cell_h: f32,
+    background: Option<Rgba>,
+    radius: f32,
+    opacity: f32,
+    border: Option<Border>,
+    img: Option<Img>,
+    svg_markup: String,
+    /// The node's untyped style keys (the `extra` map), for the small set of
+    /// passthrough effects (e.g. `box-shadow`).
+    extra: HashMap<String, serde_json::Value>,
+}
+
+impl Info {
+    fn container() -> Self {
+        Info {
+            kind: Kind::Container,
+            text: String::new(),
+            color: Rgba::opaque(255, 255, 255),
+            bold: false,
+            font_size: 0.0,
+            cell_w: 0.0,
+            cell_h: 0.0,
+            background: None,
+            radius: 0.0,
+            opacity: 1.0,
+            border: None,
+            img: None,
+            svg_markup: String::new(),
+            extra: HashMap::new(),
+        }
+    }
+}
+
+/// Convert a protocol Dimension to a taffy LengthPercentage (px or percent).
+fn to_length_percentage(d: TDimension) -> LengthPercentage {
+    match d {
+        TDimension::Px(v) => LengthPercentage::length(v),
+        TDimension::Percent(v) => LengthPercentage::percent(v / 100.0),
+        TDimension::ColWidth(v) => LengthPercentage::length(v * px_per_col() as f32),
+        TDimension::RowHeight(v) => LengthPercentage::length(v * px_per_row() as f32),
+    }
+}
+
+/// Resolve a protocol Dimension to a plain pixel length (percent resolves
+/// against `base`). Cell units resolve against the live cell size.
+fn to_px(d: TDimension, base: f32) -> f32 {
+    match d {
+        TDimension::Px(v) => v,
+        TDimension::Percent(v) => base * v / 100.0,
+        TDimension::ColWidth(v) => v * px_per_col() as f32,
+        TDimension::RowHeight(v) => v * px_per_row() as f32,
+    }
+}
+
+/// Build the taffy layout tree for `scene`, sized to `canvas_w` × `canvas_h`,
+/// returning the tree, the root id, and the paint-info map.
+fn build_layout(
+    scene: &Node,
+    canvas_w: f32,
+    canvas_h: f32,
+) -> (TaffyTree, NodeId, HashMap<NodeId, Info>) {
+    let mut tree = TaffyTree::new();
+    let mut info = HashMap::new();
+    let root = add(&mut tree, &mut info, scene, canvas_w, canvas_h, true, false);
+    (tree, root, info)
+}
+
+fn kind_of(n: &str) -> Kind {
+    match n {
+        "mono" | "text" => Kind::Text,
+        "svg" => Kind::Svg,
+        "img" => Kind::Img,
+        _ => Kind::Container,
+    }
+}
+
+fn add(
+    tree: &mut TaffyTree,
+    info: &mut HashMap<NodeId, Info>,
+    node: &Node,
+    avail_w: f32,
+    avail_h: f32,
+    is_root: bool,
+    absolute: bool,
+) -> NodeId {
+    let kind = kind_of(&node.n);
+    let s = &node.s;
+
+    let mut ts = taffy::style::Style::default();
+
+    // Stack children are absolutely-positioned layers anchored top-left,
+    // filling the stack box (their own width/height styles still apply).
+    if absolute {
+        ts.position = Position::Absolute;
+        ts.inset.left = LengthPercentageAuto::length(0.0);
+        ts.inset.top = LengthPercentageAuto::length(0.0);
+    }
+
+    // Flex layout for `flex` containers.
+    if node.n == "flex" {
+        ts.display = Display::Flex;
+        ts.flex_direction = match s.flex_direction.as_deref() {
+            Some("column") => FlexDirection::Column,
+            _ => FlexDirection::Row,
+        };
+        ts.justify_content = match s.justify_content.as_deref() {
+            Some("center") => Some(JustifyContent::Center),
+            Some("space-between") => Some(JustifyContent::SpaceBetween),
+            Some("space-around") => Some(JustifyContent::SpaceAround),
+            Some("space-evenly") => Some(JustifyContent::SpaceEvenly),
+            Some("flex-end") | Some("end") => Some(JustifyContent::FlexEnd),
+            _ => Some(JustifyContent::FlexStart),
+        };
+        ts.align_items = match s.align_items.as_deref() {
+            Some("center") => Some(AlignItems::Center),
+            Some("flex-end") | Some("end") => Some(AlignItems::FlexEnd),
+            Some("stretch") => Some(AlignItems::Stretch),
+            _ => Some(AlignItems::FlexStart),
+        };
+    }
+
+    // Stack: children are absolutely-positioned layers filling the stack box.
+    let is_stack = node.n == "stack";
+    if is_stack {
+        ts.position = Position::Relative;
+    } // Gap (flex only).
+    if let Some(g) = s.gap {
+        let v = to_length_percentage(g);
+        ts.gap = Size {
+            width: v,
+            height: v,
+        };
+    }
+
+    // Padding: shorthand and longhands.
+    let pad = |d: Option<TDimension>| -> LengthPercentage {
+        d.map(to_length_percentage)
+            .unwrap_or(LengthPercentage::length(0.0))
     };
-    use parley::fontique::{FontInfoOverride, FontStyle, FontWeight as FqWeight};
-    let override_info = FontInfoOverride {
-        family_name: Some(family_name),
-        weight: Some(if bold {
-            FqWeight::BOLD
-        } else {
-            FqWeight::NORMAL
-        }),
-        style: Some(if italic {
-            FontStyle::Italic
-        } else {
-            FontStyle::Normal
-        }),
-        ..Default::default()
-    };
-    match ctx
-        .font_context
-        .load_and_store(FontResource::new(bytes).override_info(override_info))
-    {
-        Ok(()) => {
-            let variant = match (bold, italic) {
-                (false, false) => "regular",
-                (true, false) => "bold",
-                (false, true) => "italic",
-                (true, true) => "bold-italic",
+    match (
+        s.padding,
+        s.padding_top,
+        s.padding_right,
+        s.padding_bottom,
+        s.padding_left,
+    ) {
+        (Some(p), None, None, None, None) => {
+            let v = to_length_percentage(p);
+            ts.padding = taffy::geometry::Rect {
+                left: v,
+                right: v,
+                top: v,
+                bottom: v,
             };
-            if std::env::var("TWP_DEBUG").is_ok() {
-                eprintln!(
-                    "twp-proxy: loaded {variant} font {} (family={family_name})",
-                    path.display(),
-                );
+        }
+        _ => {
+            ts.padding = taffy::geometry::Rect {
+                top: pad(s.padding_top),
+                right: pad(s.padding_right),
+                bottom: pad(s.padding_bottom),
+                left: pad(s.padding_left),
+            };
+            // A plain shorthand is overridden by longhands where present.
+            if let Some(p) = s.padding {
+                let v = to_length_percentage(p);
+                let cur = ts.padding;
+                ts.padding = taffy::geometry::Rect {
+                    top: if s.padding_top.is_some() { cur.top } else { v },
+                    right: if s.padding_right.is_some() {
+                        cur.right
+                    } else {
+                        v
+                    },
+                    bottom: if s.padding_bottom.is_some() {
+                        cur.bottom
+                    } else {
+                        v
+                    },
+                    left: if s.padding_left.is_some() {
+                        cur.left
+                    } else {
+                        v
+                    },
+                };
             }
         }
-        Err(e) => eprintln!("twp-proxy: failed to load {}: {e:?}", path.display()),
-    }
-}
-
-/// Default font-size in render-resolution pixels when a `text` node
-/// doesn't specify one. Tuned to be roughly cell-height; this is what
-/// glyphs in a "unstyled" text widget will render at.
-const DEFAULT_FONT_SIZE_PX: f32 = 32.0;
-
-/// Measured natural glyph advance for a (font-size px, weight) pair —
-/// what parley produces with default settings before we add any
-/// letter-spacing. Cached because each entry costs a layout pass.
-fn natural_advance(font_size_px: f32, weight: u16) -> f32 {
-    static CACHE: OnceLock<Mutex<HashMap<(u32, u16), f32>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let key = (font_size_px.to_bits(), weight);
-    if let Some(&a) = cache.lock().unwrap().get(&key) {
-        return a;
     }
 
-    // Measure a long ASCII run; we want the inline text run's width so we
-    // can divide by char count for per-glyph advance. Wrap the text in a
-    // flex container so parley produces an inline run we can read.
-    let sample = "0123456789 abcdefghij klmnopqrstu vwxyz ABCDE";
-    let family_key = if weight >= 700 {
-        FAMILY_BOLD
+    if let Some(g) = s.flex_grow {
+        ts.flex_grow = g;
+    }
+    if let Some(mw) = s.max_width {
+        ts.max_size.width = Dimension::from(to_length_percentage(mw));
+    }
+
+    // Sizing.
+    let grow = s.flex_grow.map(|g| g > 0.0).unwrap_or(false);
+    if is_stack {
+        ts.size.width = s
+            .width
+            .map(|d| Dimension::from(to_length_percentage(d)))
+            .unwrap_or_else(|| {
+                if is_root {
+                    Dimension::length(avail_w)
+                } else {
+                    Dimension::auto()
+                }
+            });
+        ts.size.height = s
+            .height
+            .map(|d| Dimension::from(to_length_percentage(d)))
+            .unwrap_or_else(|| {
+                if is_root {
+                    Dimension::length(avail_h)
+                } else {
+                    Dimension::auto()
+                }
+            });
     } else {
-        FAMILY_REGULAR
-    };
-    let mut probe_style = TkStyle::default()
-        .with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
-            font_size_px,
-        ))))
-        .with(StyleDeclaration::font_weight(TkFW::from(weight as f32)))
-        .with(StyleDeclaration::font_feature_settings(disable_ligatures()));
-    if let Ok(ff) = FontFamily::from_str(&format!("\"{family_key}\"")) {
-        probe_style = probe_style.with(StyleDeclaration::font_family(ff));
+        match kind {
+            Kind::Text => {
+                let scale = s.scale.unwrap_or(1).max(1);
+                let char_w = s.char_width.unwrap_or(scale).max(1);
+                let n = node.t.as_deref().unwrap_or("").chars().count() as f32;
+                ts.size.width = Dimension::length(n * px_per_col() as f32 * char_w as f32);
+                ts.size.height = Dimension::length(px_per_row() as f32 * scale as f32);
+            }
+            _ => {
+                ts.size.width = match &s.width {
+                    Some(d) => Dimension::from(to_length_percentage(*d)),
+                    None if is_root => Dimension::length(avail_w),
+                    None if grow => Dimension::auto(),
+                    None => Dimension::auto(),
+                };
+                ts.size.height = match &s.height {
+                    Some(d) => Dimension::from(to_length_percentage(*d)),
+                    None if is_root => Dimension::length(avail_h),
+                    None => Dimension::auto(),
+                };
+            }
+        }
     }
-    let text_node = TakumiNode::text(sample).with_style(probe_style);
-    let probe = TakumiNode::container(vec![text_node])
-        .with_style(TkStyle::default().with(StyleDeclaration::display(Display::Flex)));
-    let opts = RenderOptions::builder()
-        .viewport(Viewport::new((4096u32, 256u32)))
-        .node(probe)
-        .global(context())
-        .build();
-    let measured = measure_layout(opts).expect("measure_layout");
-    // The flex container has no explicit width, so it shrinks to its
-    // single text child's natural width — exactly what we want.
-    let advance = measured.width / sample.chars().count() as f32;
-    cache.lock().unwrap().insert(key, advance);
-    advance
+
+    let id = tree.new_leaf(ts).unwrap();
+
+    // Children.
+    if is_stack {
+        for child in &node.c {
+            let cid = add(tree, info, child, avail_w, avail_h, false, true);
+            tree.add_child(id, cid).unwrap();
+        }
+    } else {
+        for child in &node.c {
+            let cid = add(tree, info, child, avail_w, avail_h, false, false);
+            tree.add_child(id, cid).unwrap();
+        }
+    }
+
+    // Paint info.
+    let mut inf = Info::container();
+    inf.kind = kind;
+    inf.text = node.t.clone().unwrap_or_default();
+    let scale = s.scale.unwrap_or(1).max(1);
+    let char_w = s.char_width.unwrap_or(scale).max(1);
+    inf.bold = matches!(&s.font_weight, Some(FontWeight::Name(n)) if n == "bold")
+        || matches!(&s.font_weight, Some(FontWeight::Number(n)) if *n >= 700);
+    inf.font_size = px_per_row() as f32 * scale as f32 * s.subscale_n.unwrap_or(1) as f32
+        / s.subscale_d.filter(|&d| d > 0).unwrap_or(1) as f32
+        * 0.75;
+    inf.cell_w = px_per_col() as f32 * char_w as f32;
+    inf.cell_h = px_per_row() as f32 * scale as f32;
+    if let Some(rgba) = s.color.as_deref().and_then(resolve_color) {
+        inf.color = rgba;
+    }
+    if let Some(bg) = &s.background {
+        inf.background = resolve_color(bg);
+    }
+    inf.radius = s
+        .border_radius
+        .map(|d| to_px(d, avail_w))
+        .unwrap_or(0.0)
+        .max(0.0);
+    inf.opacity = s.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
+    inf.border = s.border.clone();
+    inf.img = node.img.clone();
+    if kind == Kind::Svg {
+        inf.svg_markup = substitute_term(node.t.as_deref().unwrap_or(""));
+    }
+    inf.extra = s.extra.clone();
+    info.insert(id, inf);
+    id
 }
 
-/// Build a font-feature-settings list that disables OpenType ligatures
-/// (`liga`, `clig`, `dlig`) and discretionary calt — Nerd Fonts and
-/// programming fonts often have these enabled, which can shift per-glyph
-/// advance widths and break our integer-pixel assumption.
-fn disable_ligatures() -> Box<[FontFeature]> {
-    Box::new([
-        FontFeature::new(Tag::new(b"liga"), 0),
-        FontFeature::new(Tag::new(b"clig"), 0),
-        FontFeature::new(Tag::new(b"dlig"), 0),
-        FontFeature::new(Tag::new(b"calt"), 0),
-    ])
+// ── SVG emission ───────────────────────────────────────────────────
+
+struct EmitCtx {
+    info: HashMap<NodeId, Info>,
+    blur_ids: usize,
 }
 
-/// Returns the `letter-spacing` value (in px at our render resolution)
-/// needed to coerce per-glyph advance to the nearest integer pixel.
-/// Without this, parley's fractional advances accumulate across long
-/// strings and the resulting glyphs drift away from the cell grid when
-/// Kitty downscales to the host cell box.
-fn integer_pixel_letter_spacing(font_size_px: f32, weight: u16) -> f32 {
-    let natural = natural_advance(font_size_px, weight);
-    natural.ceil() - natural
+impl EmitCtx {
+    fn new(info: HashMap<NodeId, Info>) -> Self {
+        EmitCtx { info, blur_ids: 0 }
+    }
+    fn blur_id(&mut self) -> String {
+        self.blur_ids += 1;
+        format!("twp-blur-{}", self.blur_ids)
+    }
 }
 
-pub fn render_to_png(scene: &Node, cols: u32, rows: u32) -> Vec<u8> {
-    let img_w = (cols.max(1)) * px_per_col();
-    let img_h = (rows.max(1)) * px_per_row();
-    let takumi_root = to_takumi(scene);
-    let opts = RenderOptions::builder()
-        .viewport(Viewport::new((img_w, img_h)))
-        .node(takumi_root)
-        .global(context())
-        .build();
-    let img = render(opts).expect("takumi render");
-    let mut buf = Vec::with_capacity(8 * 1024);
-    write_image(Cow::Owned(img), &mut buf, ImageOutputFormat::Png, None).expect("png encode");
-    buf
+fn f(x: f32) -> String {
+    let r = (x * 100.0).round() / 100.0;
+    if r.fract() == 0.0 {
+        format!("{}", r as i64)
+    } else {
+        format!("{r}")
+    }
 }
 
-/// Raw bytes for an `img` node, decoded from base64 (`t=d`) or read from a
-/// file (`t=f`). Returns None if no source resolves.
-fn img_source_bytes(img: &Img) -> Option<Vec<u8>> {
+/// Render `scene` to an SVG document string sized `img_w` × `img_h`.
+fn scene_to_svg(scene: &Node, img_w: u32, img_h: u32) -> String {
+    let (tree, root, info) = build_layout(scene, img_w as f32, img_h as f32);
+    let avail = Size {
+        width: AvailableSpace::Definite(img_w as f32),
+        height: AvailableSpace::Definite(img_h as f32),
+    };
+    let mut tree = tree;
+    tree.compute_layout(root, avail)
+        .expect("taffy layout should succeed");
+
+    let mut out = String::with_capacity(8 * 1024);
+    out.push_str(&format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{img_w}" height="{img_h}" viewBox="0 0 {img_w} {img_h}">"#
+    ));
+    let mut defs = String::new();
+    let mut body = String::new();
+    let mut ctx = EmitCtx::new(info);
+    emit(&tree, &mut ctx, &mut defs, &mut body, root, 0.0, 0.0);
+    if !defs.is_empty() {
+        out.push_str(&format!("<defs>{defs}</defs>"));
+    }
+    out.push_str(&body);
+    out.push_str("</svg>");
+    out
+}
+
+fn emit(
+    tree: &TaffyTree,
+    ctx: &mut EmitCtx,
+    defs: &mut String,
+    body: &mut String,
+    id: NodeId,
+    ox: f32,
+    oy: f32,
+) {
+    let layout = tree.layout(id).unwrap();
+    let (x, y, w, h) = (
+        ox + layout.location.x,
+        oy + layout.location.y,
+        layout.size.width,
+        layout.size.height,
+    );
+    let inf = ctx.info[&id].clone();
+
+    // box-shadow (passthrough effect) — a blurred rect behind the node.
+    if let Some(shadow) = parse_box_shadow(&inf) {
+        let (sx, sy, blur, color) = shadow;
+        let bid = ctx.blur_id();
+        defs.push_str(&format!(
+            r#"<filter id="{bid}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="{blur}"/></filter>"#
+        ));
+        body.push_str(&format!(
+            r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{}" fill="{}" filter="url(#{bid})"/>"#,
+            f(x + sx),
+            f(y + sy),
+            f(w),
+            f(h),
+            f(inf.radius),
+            color
+        ));
+    }
+
+    match inf.kind {
+        Kind::Text => {
+            // A text node paints its declared background across its box (so a
+            // highlighted run reads as a filled cell-span), then the glyphs.
+            if let Some(bg) = inf.background {
+                body.push_str(&format!(
+                    r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{}" fill="{}" fill-opacity="{:.3}"/>"#,
+                    f(x),
+                    f(y),
+                    f(w),
+                    f(h),
+                    f(inf.radius),
+                    bg.to_css(),
+                    inf.opacity
+                ));
+            }
+            emit_text(body, x, y, &inf);
+        }
+        Kind::Svg => emit_svg(defs, body, x, y, w, h, &inf),
+        Kind::Img => emit_img(defs, body, x, y, w, h, &inf),
+        Kind::Container => {
+            if let Some(bg) = inf.background {
+                let fill = bg.to_css();
+                body.push_str(&format!(
+                    r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{}" fill="{}" fill-opacity="{:.3}"/>"#,
+                    f(x),
+                    f(y),
+                    f(w),
+                    f(h),
+                    f(inf.radius),
+                    fill,
+                    inf.opacity
+                ));
+            }
+            // Children paint on top of the background.
+            for child in tree.children(id).unwrap() {
+                emit(tree, ctx, defs, body, child, x, y);
+            }
+            // Border is painted *after* content — a non-displacing edge stroke.
+            if let Some((color, width)) = inf
+                .border
+                .as_ref()
+                .and_then(|b| resolve_color(&b.color).map(|c| (c, b.width)))
+            {
+                body.push_str(&format!(
+                    r#"<rect x="{}" y="{}" width="{}" height="{}" rx="{}" fill="none" stroke="{}" stroke-width="{}"/>"#,
+                    f(x),
+                    f(y),
+                    f(w),
+                    f(h),
+                    f(inf.radius),
+                    color.to_css(),
+                    f(width)
+                ));
+            }
+        }
+    }
+}
+
+/// Emit a mono/text node: one `<text>` per glyph, positioned arithmetically
+/// (`x = col * cell_w`) so no font-advance measurement is needed and there is
+/// no cumulative drift.
+fn emit_text(body: &mut String, x: f32, y: f32, inf: &Info) {
+    let bold = if inf.bold {
+        " font-weight=\"bold\""
+    } else {
+        ""
+    };
+    let fill = inf.color.to_css();
+    for (i, ch) in inf.text.chars().enumerate() {
+        if ch == ' ' {
+            continue; // spaces produce no ink
+        }
+        let cx = x + i as f32 * inf.cell_w;
+        let cy = y + inf.font_size; // baseline
+        let escaped = match ch {
+            '&' => "&amp;".to_string(),
+            '<' => "&lt;".to_string(),
+            '>' => "&gt;".to_string(),
+            '"' => "&quot;".to_string(),
+            c => c.to_string(),
+        };
+        body.push_str(&format!(
+            r#"<text x="{}" y="{}" font-size="{}" fill="{}" fill-opacity="{:.3}"{}>{}</text>"#,
+            f(cx),
+            f(cy),
+            f(inf.font_size),
+            fill,
+            inf.opacity,
+            bold,
+            escaped
+        ));
+    }
+}
+
+/// Emit an `svg` node: the inline markup, with `term(...)` already resolved and
+/// `currentColor` bound to the node's `color`, embedded as an SVG image scaled
+/// to the node's box (clipped to `border-radius`).
+fn emit_svg(defs: &mut String, body: &mut String, x: f32, y: f32, w: f32, h: f32, inf: &Info) {
+    let mut markup = inf.svg_markup.clone();
+    // Bind `currentColor` to the node's `color` so vector art can inherit a
+    // (possibly theme-derived) color.
+    markup = markup.replace("currentColor", &inf.color.to_css());
+    let data = STANDARD.encode(markup.as_bytes());
+    let clip = clip_attr(defs, x, y, w, h, inf);
+    body.push_str(&format!(
+        r#"<image x="{}" y="{}" width="{}" height="{}" preserveAspectRatio="none"{} href="data:image/svg+xml;base64,{}"/>"#,
+        f(x),
+        f(y),
+        f(w),
+        f(h),
+        clip,
+        data
+    ));
+}
+
+/// Emit an `img` node: decode the source and embed it as a raster image data
+/// URI, clipped to `border-radius`.
+fn emit_img(defs: &mut String, body: &mut String, x: f32, y: f32, w: f32, h: f32, inf: &Info) {
+    let Some(img) = &inf.img else { return };
+    let Some(data) = img_data_uri(img) else {
+        eprintln!("twp-proxy: img node has no resolvable source");
+        return;
+    };
+    let clip = clip_attr(defs, x, y, w, h, inf);
+    body.push_str(&format!(
+        r#"<image x="{}" y="{}" width="{}" height="{}" preserveAspectRatio="xMidYMid slice"{} href="{}"/>"#,
+        f(x),
+        f(y),
+        f(w),
+        f(h),
+        clip,
+        data
+    ));
+}
+
+/// If the node has a `border-radius`, emit a `<clipPath>` rounded rect in
+/// `defs` and return the `clip-path` attribute referencing it.
+fn clip_attr(defs: &mut String, x: f32, y: f32, w: f32, h: f32, inf: &Info) -> String {
+    if inf.radius <= 0.0 {
+        return String::new();
+    }
+    // A stable id from the node's top-left corner.
+    let id = format!("twp-clip-{}-{}", (x * 100.0) as u32, (y * 100.0) as u32);
+    defs.push_str(&format!(
+        r#"<clipPath id="{id}"><rect x="{}" y="{}" width="{}" height="{}" rx="{}"/></clipPath>"#,
+        f(x),
+        f(y),
+        f(w),
+        f(h),
+        f(inf.radius)
+    ));
+    format!(r#" clip-path="url(#{id})""#)
+}
+
+/// Decode an `img` node's source into a `data:` URI string. Encoded formats
+/// (PNG/JPEG) are passed through; raw RGBA/RGB are encoded to PNG first.
+fn img_data_uri(img: &Img) -> Option<String> {
     let medium = img
         .transmission
         .as_deref()
         .unwrap_or(if img.data.is_some() { "d" } else { "f" });
-    match medium {
-        "d" => STANDARD.decode(img.data.as_deref()?.trim()).ok(),
-        "f" => std::fs::read(img.path.as_deref()?).ok(),
-        _ => None,
-    }
-}
-
-/// Build a takumi image node from an `img` node's Kitty-style source. PNG/
-/// encoded formats are decoded by takumi; raw RGBA/RGB are wrapped directly.
-/// On any failure the node degrades to an empty styled box so the surrounding
-/// widget still renders.
-fn build_img(node: &Node, style: TkStyle) -> TakumiNode {
-    let Some(img) = &node.img else {
-        return TakumiNode::container(vec![]).with_style(style);
+    let bytes = match medium {
+        "d" => STANDARD.decode(img.data.as_deref()?.trim()).ok()?,
+        "f" => std::fs::read(img.path.as_deref()?).ok()?,
+        _ => return None,
     };
-    let Some(bytes) = img_source_bytes(img) else {
-        eprintln!("twp-proxy: img node has no resolvable source");
-        return TakumiNode::container(vec![]).with_style(style);
-    };
-
     let format = img.format.unwrap_or(100);
-    let data: Option<ImageData> = match format {
-        // Raw RGBA pixels.
-        32 => match (img.data_width, img.data_height) {
-            (Some(w), Some(h)) => RgbaImage::from_raw(w, h, bytes).map(ImageData::from),
-            _ => None,
-        },
-        // Raw RGB pixels — expand to RGBA.
-        24 => match (img.data_width, img.data_height) {
-            (Some(w), Some(h)) => {
-                let mut rgba = Vec::with_capacity(bytes.len() / 3 * 4);
-                for px in bytes.chunks_exact(3) {
-                    rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
-                }
-                RgbaImage::from_raw(w, h, rgba).map(ImageData::from)
+    match format {
+        32 => {
+            let (w, h) = (img.data_width?, img.data_height?);
+            let rgba = image::RgbaImage::from_raw(w, h, bytes)?;
+            let mut buf = Vec::new();
+            rgba.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+                .ok()?;
+            let b64 = STANDARD.encode(&buf);
+            Some(format!("data:image/png;base64,{b64}"))
+        }
+        24 => {
+            let (w, h) = (img.data_width?, img.data_height?);
+            let mut rgba = Vec::with_capacity(bytes.len() / 3 * 4);
+            for px in bytes.chunks_exact(3) {
+                rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
-            _ => None,
-        },
-        // PNG or any other encoded format — takumi decodes the buffer.
-        _ => Some(ImageData::from(bytes)),
-    };
-
-    match data {
-        Some(d) => TakumiNode::image(d).with_style(style),
-        None => {
-            eprintln!("twp-proxy: img node has invalid pixel data (f={format})");
-            TakumiNode::container(vec![]).with_style(style)
+            let img = image::RgbaImage::from_raw(w, h, rgba)?;
+            let mut buf = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+                .ok()?;
+            let b64 = STANDARD.encode(&buf);
+            Some(format!("data:image/png;base64,{b64}"))
         }
-    }
-}
-
-/// Apply a literal CSS declaration string to a style. Used for the internal
-/// positioning of `stack` layers (position/inset/z-index). Parse failures are
-/// logged and skipped.
-fn apply_css_str(mut style: TkStyle, css: &str) -> TkStyle {
-    match css.parse::<StyleDeclarationBlock>() {
-        Ok(block) => {
-            for decl in block.iter() {
-                style = style.with(decl.clone());
-            }
-        }
-        Err(_) => eprintln!("twp-proxy: internal css failed to parse: {css}"),
-    }
-    style
-}
-
-/// Build a `stack` node: its children are painted as full-bleed layers in
-/// array order (later = on top). The stack only provides overlap + z-order;
-/// any positioning *within* a layer is done with a flex inside it. The layers
-/// fill the stack's cell box — a native terminal would composite them using
-/// the graphics protocol's own z-index.
-fn build_stack(node: &Node) -> TakumiNode {
-    let container = apply_css_str(build_style(node), "position: relative");
-    let layers: Vec<TakumiNode> = node
-        .c
-        .iter()
-        .enumerate()
-        .map(|(i, child)| {
-            let inner = to_takumi(child);
-            let wrap = apply_css_str(
-                TkStyle::default(),
-                &format!(
-                    "position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: {i}"
-                ),
-            );
-            TakumiNode::container(vec![inner]).with_style(wrap)
-        })
-        .collect();
-    TakumiNode::container(layers).with_style(container)
-}
-
-/// Build an `svg` node: the SVG markup lives in the node's `t` field (it's
-/// text, so it can go inline — a shell script can `printf` it). takumi parses
-/// and rasterizes it via resvg into the node's box. On parse failure the node
-/// degrades to an empty styled box.
-fn build_svg(node: &Node, style: TkStyle) -> TakumiNode {
-    // Resolve `term(...)` tokens in the markup (self-delimiting → safe), then
-    // parse. `currentColor` inside the SVG resolves to the node's `color`
-    // (set e.g. via `color: term(fg)`), handled natively by resvg/takumi.
-    let svg = substitute_term(node.t.as_deref().unwrap_or(""));
-    match svg.parse::<SvgSource>() {
-        Ok(src) => {
-            let source: ImageSource = src.into();
-            TakumiNode::image(ImageData::from(source)).with_style(style)
-        }
-        Err(_) => {
-            eprintln!("twp-proxy: svg node failed to parse");
-            TakumiNode::container(vec![]).with_style(style)
-        }
-    }
-}
-
-fn to_takumi(node: &Node) -> TakumiNode {
-    let style = build_style(node);
-    match node.n.as_str() {
-        "text" => {
-            let text = node.t.as_deref().unwrap_or("");
-            TakumiNode::text(text).with_style(style)
-        }
-        "mono" => build_mono(node),
-        "img" => build_img(node, style),
-        "svg" => build_svg(node, style),
-        "stack" => build_stack(node),
-        // "flex", "box", or anything not text (including unfilled-component
-        // placeholders). Layout differences are encoded via the `display`
-        // declaration applied in build_style.
         _ => {
-            let children: Vec<TakumiNode> = node.c.iter().map(to_takumi).collect();
-            TakumiNode::container(children).with_style(style)
+            let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+                "image/png"
+            } else if bytes.starts_with(&[0xFF, 0xD8]) {
+                "image/jpeg"
+            } else {
+                "image/png"
+            };
+            let b64 = STANDARD.encode(&bytes);
+            Some(format!("data:{mime};base64,{b64}"))
         }
     }
 }
 
-/// Parse the style's CSS passthrough map (`Style::extra`) into a list of
-/// takumi declarations. Each `key: value` pair is assembled into one CSS
-/// block and parsed by takumi's own CSS engine, so any property takumi
-/// supports — `text-shadow`, `opacity`, `-webkit-text-stroke`,
-/// `text-decoration`, `filter`, … — works with no per-property code.
-/// Malformed input is dropped (forward-compat), matching the typed
-/// vocabulary's "unknown props silently ignored" behavior.
-fn css_passthrough_decls(extra: &HashMap<String, serde_json::Value>) -> Vec<StyleDeclaration> {
-    let mut decls = Vec::new();
-    // Parse each property on its own so one unparsable value is dropped in
-    // isolation rather than discarding the whole style (takumi's block parser
-    // is all-or-nothing).
-    for (key, value) in extra {
-        let val = match value {
-            serde_json::Value::String(s) => Cow::Borrowed(s.as_str()),
-            serde_json::Value::Number(n) => Cow::Owned(n.to_string()),
-            serde_json::Value::Bool(b) => Cow::Owned(b.to_string()),
-            // arrays / objects / null are not valid CSS values
-            _ => continue,
-        };
-        // Resolve `term(...)` palette tokens and `m`-cell units before takumi
-        // parses the value.
-        let css = format!("{key}: {}", substitute_cell_units(&substitute_term(&val)));
-        match css.parse::<StyleDeclarationBlock>() {
-            Ok(block) => decls.extend(block.iter().cloned()),
-            Err(_) => eprintln!("twp-proxy: ignoring invalid CSS property: {css}"),
-        }
+/// Parse a `box-shadow` passthrough value (`h v blur color`) into the offset,
+/// blur, and resolved color. Returns None if unparseable.
+fn parse_box_shadow(inf: &Info) -> Option<(f32, f32, f32, String)> {
+    let value = inf.extra.get("box-shadow")?.as_str()?;
+    let parts: Vec<&str> = value.split_whitespace().collect();
+    if parts.len() < 4 {
+        return None;
     }
-    decls
+    let h: f32 = parts[0].trim_end_matches("px").parse().ok()?;
+    let v: f32 = parts[1].trim_end_matches("px").parse().ok()?;
+    let blur: f32 = parts[2].trim_end_matches("px").parse().ok()?;
+    let color = resolve_color(&parts[3..].join(" "))?.to_css();
+    Some((h, v, blur, color))
 }
 
-/// Resolve a colour value for CSS property `prop` (e.g. `"background-color"`,
-/// `"color"`) into a takumi declaration via its full colour parser, after
-/// `term()` substitution. This is the fallback for the typed `color` /
-/// `background` fields when our simple `parse_color` doesn't recognise the
-/// value — enabling *derived* colours like `color-mix(in srgb, term(2) 18%,
-/// term(bg))` and relative `rgb(from term(1) r g b / .3)` in those fields.
-fn color_decl(prop: &str, value: &str) -> Option<StyleDeclaration> {
-    let css = format!("{prop}: {}", substitute_term(value));
-    css.parse::<StyleDeclarationBlock>()
-        .ok()
-        .and_then(|block| block.iter().next().cloned())
-}
+/// Render `scene` to a PNG at `cols` × `rows` cells, sized to the live cell
+/// pixels. This is the same image the proxy transmits via Kitty.
+pub fn render_to_png(scene: &Node, cols: u32, rows: u32) -> Vec<u8> {
+    let img_w = (cols.max(1)) * px_per_col();
+    let img_h = (rows.max(1)) * px_per_row();
+    let svg = scene_to_svg(scene, img_w, img_h);
+    if std::env::var("TWP_DEBUG_SVG").is_ok() {
+        eprintln!("twp-proxy SVG:\n{svg}");
+    }
 
-/// Build a monospace-grid text node: each character gets its own
-/// fixed-width cell box, so glyph positions are determined by the grid
-/// and not by the font's advance width. Zero drift by construction.
-fn build_mono(node: &Node) -> TakumiNode {
-    let text = node.t.as_deref().unwrap_or("");
-    let s = &node.s;
-
-    // Text-sizing parameters — mirrors Kitty's OSC 66 [2]:
-    //   scale (s): each char occupies scale×scale cells
-    //   char-width (w): override horizontal cell count per char
-    //   subscale-n/d: fractional glyph size within the cell block
-    let scale = s.scale.unwrap_or(1).max(1);
-    let char_w_cells = s.char_width.unwrap_or(scale); // w=0 → same as scale
-    let (sub_n, sub_d) = match (s.subscale_n, s.subscale_d) {
-        (Some(n), Some(d)) if d > 0 => (n.min(d) as f32, d as f32),
-        _ => (1.0, 1.0), // no subscale → full size
+    let opt = usvg_options();
+    let tree = match usvg::Tree::from_str(&svg, &opt) {
+        Ok(t) => t,
+        Err(e) => panic!("twp-proxy: generated SVG failed to parse: {e}\n{svg}"),
     };
-
-    let base_font = px_per_row() as f32 * 0.75;
-    let font_size_px = s
-        .font_size
-        .unwrap_or(base_font * scale as f32 * sub_n / sub_d);
-
-    let weight: u16 = match &s.font_weight {
-        Some(FontWeight::Name(n)) if n == "bold" => 700,
-        Some(FontWeight::Number(n)) => *n,
-        _ => 400,
-    };
-    let family_key = if weight >= 700 {
-        FAMILY_BOLD
-    } else {
-        FAMILY_REGULAR
-    };
-    // Foreground as a declaration: fast path via parse_color (term/hex), else
-    // takumi's colour parser for derived colours (color-mix(), relative rgb()).
-    let fg_decl: Option<StyleDeclaration> = s.color.as_deref().and_then(|v| {
-        parse_color(v)
-            .map(|c| StyleDeclaration::color(ColorInput::from(c)))
-            .or_else(|| color_decl("color", v))
-    });
-
-    // Text effects (text-shadow, opacity, stroke, …) come through the CSS
-    // passthrough and apply per glyph. Parsed once, cloned onto each cell.
-    let extra_decls = css_passthrough_decls(&s.extra);
-
-    // Build a flex row of single-character cells. Each cell is
-    // char_w_cells × scale terminal cells.
-    let cell_w = px_per_col() as f32 * char_w_cells as f32;
-    let cell_h = px_per_row() as f32 * scale as f32;
-    let cells: Vec<TakumiNode> = text
-        .chars()
-        .map(|ch| {
-            let mut char_style = TkStyle::default()
-                .with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
-                    font_size_px,
-                ))))
-                .with(StyleDeclaration::font_feature_settings(disable_ligatures()));
-            if let Ok(ff) = FontFamily::from_str(&format!("\"{family_key}\"")) {
-                char_style = char_style.with(StyleDeclaration::font_family(ff));
-            }
-            // Don't set font-weight — we already selected the correct
-            // font file via family_key. Requesting weight 700 on a font
-            // whose internal metadata says 400 makes parley fail to match.
-            if let Some(d) = &fg_decl {
-                char_style = char_style.with(d.clone());
-            }
-            for decl in &extra_decls {
-                char_style = char_style.with(decl.clone());
-            }
-            let glyph = TakumiNode::text(ch.to_string()).with_style(char_style);
-
-            let cell_style = TkStyle::default()
-                .with(StyleDeclaration::display(Display::Flex))
-                .with(StyleDeclaration::justify_content(JustifyContent::Center))
-                .with(StyleDeclaration::align_items(AlignItems::Center))
-                .with(StyleDeclaration::width(Length::Px(cell_w)))
-                .with(StyleDeclaration::height(Length::Px(cell_h)));
-            TakumiNode::container(vec![glyph]).with_style(cell_style)
-        })
-        .collect();
-
-    // Outer container: flex row, no gap.
-    let mut outer_style = TkStyle::default()
-        .with(StyleDeclaration::display(Display::Flex))
-        .with(StyleDeclaration::flex_direction(FlexDirection::Row))
-        .with(StyleDeclaration::align_items(AlignItems::Center));
-
-    // Apply visual styling from the node (background, padding, etc.).
-    if let Some(v) = s.background.as_deref() {
-        if let Some(bg) = parse_color(v) {
-            outer_style =
-                outer_style.with(StyleDeclaration::background_color(ColorInput::from(bg)));
-        } else if let Some(d) = color_decl("background-color", v) {
-            outer_style = outer_style.with(d);
-        }
-    }
-    if let Some(w) = s.width {
-        outer_style = outer_style.with(StyleDeclaration::width(to_length(w)));
-    }
-    if let Some(h) = s.height {
-        outer_style = outer_style.with(StyleDeclaration::height(to_length(h)));
-    }
-    if let Some(r) = s.border_radius {
-        let pair = SpacePair::from_single(to_length_zero(r));
-        outer_style = outer_style
-            .with(StyleDeclaration::border_top_left_radius(pair))
-            .with(StyleDeclaration::border_top_right_radius(pair))
-            .with(StyleDeclaration::border_bottom_right_radius(pair))
-            .with(StyleDeclaration::border_bottom_left_radius(pair));
-    }
-
-    TakumiNode::container(cells).with_style(outer_style)
-}
-
-fn default_display_for(node_name: &str) -> Display {
-    match node_name {
-        "flex" => Display::Flex,
-        "box" => Display::Block,
-        _ => Display::Block, // unknown / placeholder
-    }
-}
-
-fn build_style(node: &Node) -> TkStyle {
-    let s = &node.s;
-    let mut style = TkStyle::default();
-
-    // Layout — node name is the source of truth for the layout algorithm.
-    // `flex` always uses flex; `box` is a no-layout styled container.
-    let display = default_display_for(&node.n);
-    style = style.with(StyleDeclaration::display(display));
-
-    if let Some(fd) = s.flex_direction.as_deref().and_then(parse_flex_direction) {
-        style = style.with(StyleDeclaration::flex_direction(fd));
-    }
-    if let Some(jc) = s.justify_content.as_deref().and_then(parse_justify_content) {
-        style = style.with(StyleDeclaration::justify_content(jc));
-    }
-    if let Some(ai) = s.align_items.as_deref().and_then(parse_align_items) {
-        style = style.with(StyleDeclaration::align_items(ai));
-    }
-    if let Some(gap) = s.gap {
-        let len = to_length_zero(gap);
-        style = style
-            .with(StyleDeclaration::column_gap(len))
-            .with(StyleDeclaration::row_gap(len));
-    }
-    if let Some(p) = s.padding {
-        let len = to_length_zero(p);
-        style = style
-            .with(StyleDeclaration::padding_top(len))
-            .with(StyleDeclaration::padding_right(len))
-            .with(StyleDeclaration::padding_bottom(len))
-            .with(StyleDeclaration::padding_left(len));
-    }
-
-    // Sizing
-    if let Some(w) = s.width {
-        style = style.with(StyleDeclaration::width(to_length(w)));
-    }
-    if let Some(h) = s.height {
-        style = style.with(StyleDeclaration::height(to_length(h)));
-    }
-
-    // Visual
-    if let Some(v) = s.background.as_deref() {
-        if let Some(bg) = parse_color(v) {
-            style = style.with(StyleDeclaration::background_color(ColorInput::from(bg)));
-        } else if let Some(d) = color_decl("background-color", v) {
-            style = style.with(d);
-        }
-    }
-    if let Some(v) = s.color.as_deref() {
-        if let Some(c) = parse_color(v) {
-            style = style.with(StyleDeclaration::color(ColorInput::from(c)));
-        } else if let Some(d) = color_decl("color", v) {
-            style = style.with(d);
-        }
-    }
-    if let Some(r) = s.border_radius {
-        let pair = SpacePair::from_single(to_length_zero(r));
-        style = style
-            .with(StyleDeclaration::border_top_left_radius(pair))
-            .with(StyleDeclaration::border_top_right_radius(pair))
-            .with(StyleDeclaration::border_bottom_right_radius(pair))
-            .with(StyleDeclaration::border_bottom_left_radius(pair));
-    }
-    // `border` / `border-*` are real CSS border properties; they flow through
-    // the CSS value path (term()/cell-unit substitution → takumi's native
-    // border, which is border-box, per-side capable, and supports line styles).
-
-    // Text
-    let font_size_px = s.font_size.unwrap_or(DEFAULT_FONT_SIZE_PX);
-    if s.font_size.is_some() || node.n == "text" {
-        style = style.with(StyleDeclaration::font_size(FontSize::Length(Length::Px(
-            font_size_px,
-        ))));
-    }
-    let weight: u16 = match &s.font_weight {
-        Some(FontWeight::Name(n)) if n == "bold" => 700,
-        Some(FontWeight::Name(_)) => 400,
-        Some(FontWeight::Number(n)) => *n,
-        None => 400,
-    };
-    if s.font_weight.is_some() {
-        style = style.with(StyleDeclaration::font_weight(TkFW::from(weight as f32)));
-    }
-    if let Some(ta) = s.text_align.as_deref().and_then(parse_text_align) {
-        style = style.with(StyleDeclaration::text_align(ta));
-    }
-
-    // For text nodes: explicitly select the right font file (by family
-    // name) based on weight, disable ligatures, and add letter-spacing
-    // tuned to round per-glyph advance to the nearest integer pixel.
-    // All implementation magic — the protocol's `text` node just
-    // declares a string; how the rasterizer does the rest is our problem.
-    if node.n == "text" {
-        let family_key = if weight >= 700 {
-            FAMILY_BOLD
-        } else {
-            FAMILY_REGULAR
-        };
-        if let Ok(ff) = FontFamily::from_str(&format!("\"{family_key}\"")) {
-            style = style.with(StyleDeclaration::font_family(ff));
-        }
-        style = style.with(StyleDeclaration::font_feature_settings(disable_ligatures()));
-        let spacing = integer_pixel_letter_spacing(font_size_px, weight);
-        style = style.with(StyleDeclaration::letter_spacing(Length::Px(spacing)));
-    }
-
-    // CSS passthrough: any property outside the typed vocabulary (box-shadow,
-    // background gradients, opacity, filter, …) applies to flex/box/text nodes
-    // here, just as it does per-glyph for mono.
-    for decl in css_passthrough_decls(&s.extra) {
-        style = style.with(decl);
-    }
-
-    style
-}
-
-/// Resolve a cell unit (mcw/mch) to pixels against the live cell size; returns
-/// `None` for px/percent (handled by the callers below).
-fn cell_unit_px(d: Dimension) -> Option<f32> {
-    let (pc, pr) = (px_per_col() as f32, px_per_row() as f32);
-    match d {
-        Dimension::ColWidth(v) => Some(v * pc),
-        Dimension::RowHeight(v) => Some(v * pr),
-        _ => None,
-    }
-}
-
-fn to_length(d: Dimension) -> Length {
-    if let Some(px) = cell_unit_px(d) {
-        return Length::Px(px);
-    }
-    match d {
-        Dimension::Px(v) => Length::Px(v),
-        Dimension::Percent(v) => Length::Percentage(v),
-        _ => unreachable!("cell units handled above"),
-    }
-}
-
-fn to_length_zero(d: Dimension) -> LengthDefaultsToZero {
-    if let Some(px) = cell_unit_px(d) {
-        return LengthDefaultsToZero::Px(px);
-    }
-    match d {
-        Dimension::Px(v) => LengthDefaultsToZero::Px(v),
-        Dimension::Percent(v) => LengthDefaultsToZero::Percentage(v),
-        _ => unreachable!("cell units handled above"),
-    }
-}
-
-fn parse_color(s: &str) -> Option<Color> {
-    let s = s.trim();
-    if s.eq_ignore_ascii_case("transparent") {
-        return Some(Color::from([0, 0, 0, 0]));
-    }
-    if let Some([r, g, b]) = resolve_term(s) {
-        return Some(Color::from([r, g, b, 255]));
-    }
-    let hex = s.strip_prefix('#')?;
-    let (r, g, b, a) = match hex.len() {
-        3 => {
-            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
-            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
-            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
-            (r * 17, g * 17, b * 17, 255)
-        }
-        6 => (
-            u8::from_str_radix(&hex[0..2], 16).ok()?,
-            u8::from_str_radix(&hex[2..4], 16).ok()?,
-            u8::from_str_radix(&hex[4..6], 16).ok()?,
-            255,
-        ),
-        8 => (
-            u8::from_str_radix(&hex[0..2], 16).ok()?,
-            u8::from_str_radix(&hex[2..4], 16).ok()?,
-            u8::from_str_radix(&hex[4..6], 16).ok()?,
-            u8::from_str_radix(&hex[6..8], 16).ok()?,
-        ),
-        _ => return None,
-    };
-    Some(Color::from([r, g, b, a]))
-}
-
-fn parse_flex_direction(s: &str) -> Option<FlexDirection> {
-    Some(match s {
-        "row" => FlexDirection::Row,
-        "column" => FlexDirection::Column,
-        _ => return None,
-    })
-}
-
-fn parse_justify_content(s: &str) -> Option<JustifyContent> {
-    Some(match s {
-        "start" | "flex-start" => JustifyContent::FlexStart,
-        "end" | "flex-end" => JustifyContent::FlexEnd,
-        "center" => JustifyContent::Center,
-        "space-between" => JustifyContent::SpaceBetween,
-        "space-around" => JustifyContent::SpaceAround,
-        "space-evenly" => JustifyContent::SpaceEvenly,
-        _ => return None,
-    })
-}
-
-fn parse_align_items(s: &str) -> Option<AlignItems> {
-    Some(match s {
-        "start" | "flex-start" => AlignItems::FlexStart,
-        "end" | "flex-end" => AlignItems::FlexEnd,
-        "center" => AlignItems::Center,
-        "stretch" => AlignItems::Stretch,
-        _ => return None,
-    })
-}
-
-fn parse_text_align(s: &str) -> Option<TextAlign> {
-    Some(match s {
-        "left" => TextAlign::Left,
-        "center" => TextAlign::Center,
-        "right" => TextAlign::Right,
-        _ => return None,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::expand::expand;
-    use crate::protocol::Payload;
-
-    fn render_json(json: &str, cols: u32, rows: u32) -> Vec<u8> {
-        let payload: Payload = serde_json::from_str(json).unwrap();
-        let scene = expand(payload.scene.unwrap(), &payload.defs);
-        render_to_png(&scene, cols, rows)
-    }
-
-    #[test]
-    fn renders_minimal_box() {
-        let bytes = render_json(
-            r##"{"S":{"n":"box","s":{"background":"#0a0","width":200,"height":100}}}"##,
-            20,
-            4,
-        );
-        assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
-    }
-
-    #[test]
-    fn renders_traffic_light_via_components() {
-        let bytes = render_json(
-            r##"{
-                "S": {"n":"flex","s":{"flex-direction":"row","justify-content":"space-around","align-items":"center","background":"#2a2d3a","width":400,"height":160,"border-radius":40},
-                      "c":[
-                        {"n":"$dot","props":{"col":{"n":"box","s":{"width":80,"height":80,"background":"#f04646","border-radius":"50%"}}}},
-                        {"n":"$dot","props":{"col":{"n":"box","s":{"width":80,"height":80,"background":"#fac83c","border-radius":"50%"}}}},
-                        {"n":"$dot","props":{"col":{"n":"box","s":{"width":80,"height":80,"background":"#50dc6e","border-radius":"50%"}}}}
-                      ]},
-                "C": { "dot": {"n":"$param","name":"col"} }
-            }"##,
-            20,
-            4,
-        );
-        assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
-    }
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(img_w, img_h).expect("pixmap allocation");
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::default(),
+        &mut pixmap.as_mut(),
+    );
+    pixmap.encode_png().expect("png encode")
 }

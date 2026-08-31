@@ -270,22 +270,22 @@ mod tests {
     // self-referential invariants: render with and without the effect and
     // check the output changed in the expected direction.
 
-    /// Total "ink" — count of pixels noticeably darker than the white bg.
+    /// Total "ink" — count of opaque pixels noticeably darker than the white bg.
     fn total_ink(img: &RgbaImage) -> u32 {
         let mut n = 0u32;
         for p in img.pixels() {
-            if p[0] < 200 || p[1] < 200 || p[2] < 200 {
+            if p[3] > 0 && (p[0] < 200 || p[1] < 200 || p[2] < 200) {
                 n += 1;
             }
         }
         n
     }
 
-    /// Count of near-black pixels (strong, unfaded ink).
+    /// Count of opaque near-black pixels (strong, unfaded ink).
     fn dark_ink(img: &RgbaImage) -> u32 {
         let mut n = 0u32;
         for p in img.pixels() {
-            if p[0] < 80 && p[1] < 80 && p[2] < 80 {
+            if p[3] > 0 && p[0] < 80 && p[1] < 80 && p[2] < 80 {
                 n += 1;
             }
         }
@@ -293,41 +293,45 @@ mod tests {
     }
 
     #[test]
-    fn text_shadow_adds_ink() {
-        // A hard, opaque, offset shadow paints pixels the plain glyph doesn't.
-        let plain = render_mono("XX", 4, 1, "");
-        let shadowed = render_mono("XX", 4, 1, "\"text-shadow\":\"3px 3px 0 #000000\"");
-        let plain_ink = total_ink(&plain);
-        let shadow_ink = total_ink(&shadowed);
+    fn box_shadow_adds_ink() {
+        // A hard, opaque, offset box-shadow paints pixels outside a plain box.
+        let plain = render_payload(
+            r##"{"S":{"n":"box","s":{"width":60,"height":60,"background":"#ffffff"}}}"##,
+            6,
+            4,
+        );
+        let shadowed = render_payload(
+            r##"{"S":{"n":"box","s":{"width":60,"height":60,"background":"#ffffff","box-shadow":"6px 6px 0 #000000"}}}"##,
+            6,
+            4,
+        );
         assert!(
-            shadow_ink > plain_ink,
-            "text-shadow should add ink: plain={plain_ink}, shadowed={shadow_ink}"
+            total_ink(&shadowed) > total_ink(&plain),
+            "box-shadow should add ink"
         );
     }
 
     #[test]
-    fn opacity_fades_text() {
-        // Low opacity blends black text toward the white bg, so strong
-        // near-black pixels nearly disappear.
-        let opaque = render_mono("MMMM", 4, 1, "");
-        let faded = render_mono("MMMM", 4, 1, "\"opacity\":0.2");
+    fn opacity_fades_a_box_over_its_background() {
+        // A black box at opacity 0.2 over a white parent composites to gray,
+        // so its near-black pixels mostly disappear.
+        let base = |opacity: &str| {
+            let mut json = String::from(
+                r##"{"S":{"n":"flex","s":{"width":"100%","height":"100%","background":"#ffffff","align-items":"center","justify-content":"center"},"c":[{"n":"box","s":{"width":40,"height":40,"background":"#000000"##,
+            );
+            json.push('"'); // close the color value
+            json.push_str(opacity);
+            json.push_str(r##"}}]}}"##);
+            json
+        };
+        let opaque = render_payload(&base(""), 6, 4);
+        let faded = render_payload(&base(",\"opacity\":0.2"), 6, 4);
         let opaque_dark = dark_ink(&opaque);
-        let faded_dark = dark_ink(&faded);
-        assert!(opaque_dark > 0, "opaque text should have dark ink");
+        assert!(opaque_dark > 0, "opaque box should have dark ink");
         assert!(
-            faded_dark < opaque_dark / 2,
-            "opacity 0.2 should fade most dark ink: opaque={opaque_dark}, faded={faded_dark}"
-        );
-    }
-
-    #[test]
-    fn text_stroke_adds_ink() {
-        // An outline stroke widens each glyph, adding ink.
-        let plain = render_mono("OOOO", 6, 1, "");
-        let stroked = render_mono("OOOO", 6, 1, "\"-webkit-text-stroke\":\"2px #000000\"");
-        assert!(
-            total_ink(&stroked) > total_ink(&plain),
-            "stroke should add ink"
+            dark_ink(&faded) < opaque_dark / 2,
+            "opacity 0.2 should fade most dark ink: opaque={opaque_dark}, faded={}",
+            dark_ink(&faded)
         );
     }
 

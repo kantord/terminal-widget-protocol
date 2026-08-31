@@ -112,19 +112,33 @@ pub struct Style {
     pub align_items: Option<String>,
     pub gap: Option<Dimension>,
     pub padding: Option<Dimension>,
+    #[serde(rename = "padding-top")]
+    pub padding_top: Option<Dimension>,
+    #[serde(rename = "padding-right")]
+    pub padding_right: Option<Dimension>,
+    #[serde(rename = "padding-bottom")]
+    pub padding_bottom: Option<Dimension>,
+    #[serde(rename = "padding-left")]
+    pub padding_left: Option<Dimension>,
+    #[serde(rename = "flex-grow")]
+    pub flex_grow: Option<f32>,
 
     // Sizing
     pub width: Option<Dimension>,
     pub height: Option<Dimension>,
+    #[serde(rename = "max-width")]
+    pub max_width: Option<Dimension>,
 
     // Visual
     pub background: Option<String>,
     pub color: Option<String>,
     #[serde(rename = "border-radius")]
     pub border_radius: Option<Dimension>,
-    // `border` / `border-*` are not typed: they are the real CSS border
-    // properties (shorthand or per-side longhands), collected in `extra` and
-    // forwarded to the renderer with CSS semantics. See the grid note below.
+    /// A solid border painted at the node's edge (paint, never layout — it
+    /// does not displace content or siblings; see the grid-stability rule in
+    /// §7 of the spec). Phase 1 supports no other border style.
+    pub border: Option<Border>,
+    pub opacity: Option<f32>,
 
     // Text
     #[serde(rename = "font-size")]
@@ -144,10 +158,9 @@ pub struct Style {
     pub subscale_d: Option<u32>,
 
     /// Any style key not recognized above is collected here and passed
-    /// through to the renderer as a raw CSS `property: value` declaration.
-    /// This is how effects beyond the typed vocabulary — `text-shadow`,
-    /// `opacity`, `-webkit-text-stroke`, `text-decoration`, `filter`, etc.
-    /// — reach the rasterizer without per-property wiring.
+    /// through to the renderer. In the bundled polyfill this is a small,
+    /// explicit set of extra effects (e.g. `box-shadow`); anything unknown is
+    /// dropped, preserving forward-compatibility.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -231,6 +244,15 @@ fn parse_dimension(s: &str) -> Option<Dimension> {
 pub enum FontWeight {
     Name(String),
     Number(u16),
+}
+
+/// A solid border painted on all four edges of a node. `width` is in device
+/// pixels (a hairline is `1`); `color` is any §8 color. Painted as an edge
+/// stroke *after* layout — it never displaces content (§7).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Border {
+    pub width: f32,
+    pub color: String,
 }
 
 #[cfg(test)]

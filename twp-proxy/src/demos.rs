@@ -564,7 +564,7 @@ fn docker_dashboard_scene() -> Value {
     // ── Stat cards: two gauges + a gradient network area chart ──
     let gauge_card = |value: f64, fill: &str, label: &str| {
         let pct = format!("{}%", (value * 100.0).round() as i64);
-        json!({"n":"flex","s":{"flex-direction":"column","align-items":"center","justify-content":"center","gap":"0.1mch","width":"11.5mcw","height":"4.8mch","background":surface,"border-radius":"0.75mcw","border":format!("1px solid {}",border),"padding":"0.6mcw"},"c":[
+        json!({"n":"flex","s":{"flex-direction":"column","align-items":"center","justify-content":"center","gap":"0.1mch","width":"11.5mcw","height":"4.8mch","background":surface,"border-radius":"0.75mcw","border":{"width":1,"color":border},"padding":"0.6mcw"},"c":[
             json!({"n":"svg","t":gauge_svg(value, fill),"s":{"width":"9.2mcw","height":"2.2mch"}}),
             json!({"n":"mono","t":pct,"s":{"color":fill,"font-weight":"bold"}}),
             json!({"n":"text","t":label,"s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}})
@@ -595,7 +595,7 @@ fn docker_dashboard_scene() -> Value {
          <path d='{area}' fill='url(#ng)'/>\
          <path d='{line}' fill='none' stroke='term(4)' stroke-width='2' stroke-linejoin='round'/></svg>"
     );
-    let net_card = json!({"n":"flex","s":{"flex-direction":"column","flex-grow":1,"gap":"0.2mch","height":"4.8mch","background":surface,"border-radius":"0.75mcw","border":format!("1px solid {}",border),"padding":"0.75mcw"},"c":[
+    let net_card = json!({"n":"flex","s":{"flex-direction":"column","flex-grow":1,"gap":"0.2mch","height":"4.8mch","background":surface,"border-radius":"0.75mcw","border":{"width":1,"color":border},"padding":"0.75mcw"},"c":[
         json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.6mcw"},"c":[
             json!({"n":"text","t":"Network I/O","s":{"color":muted,"font-size":12,"font-family":sans,"letter-spacing":"0px"}}),
             json!({"n":"mono","t":"↑ 4.2MB/s","s":{"color":blue}})
@@ -680,7 +680,7 @@ fn docker_dashboard_scene() -> Value {
             let badge = json!({"n":"flex","s":{"justify-content":"center","align-items":"center","background":format!("color-mix(in srgb, {sc} 18%, term(bg))"),"border-radius":"0.45mcw","padding-top":"0.1mch","padding-bottom":"0.1mch","padding-left":"0.5mcw","padding-right":"0.5mcw"},"c":[
                 json!({"n":"mono","t":*status,"s":{"color":sc}})
             ]});
-            json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.9mcw","width":"100%","padding":"0.45mcw","border-top-width":"1px","border-top-style":"solid","border-top-color":row_line},"c":[
+            json!({"n":"flex","s":{"flex-direction":"row","align-items":"center","gap":"0.9mcw","width":"100%","padding":"0.45mcw"},"c":[
                 json!({"n":"flex","s":{"width":"0.9mcw","justify-content":"center"},"c":[dot]}),
                 json!({"n":"mono","t":format!("{:<14}", name),"s":{"color":fg}}),
                 json!({"n":"mono","t":format!("{:<13}", image),"s":{"color":muted}}),
@@ -694,7 +694,7 @@ fn docker_dashboard_scene() -> Value {
 
     let mut table_children = vec![header_row];
     table_children.extend(body_rows);
-    let table = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","background":surface,"border-radius":"0.75mcw","border":format!("1px solid {}",border),"padding":"0.3mcw"},"c":table_children});
+    let table = json!({"n":"flex","s":{"flex-direction":"column","width":"100%","background":surface,"border-radius":"0.75mcw","border":{"width":1,"color":border},"padding":"0.3mcw"},"c":table_children});
 
     json!({"S":{
         "n":"flex",
@@ -773,7 +773,7 @@ fn diff_review_scene() -> Value {
     // Border colour is derived (color-mix), so it goes through the CSS
     // passthrough longhands rather than the typed `border` (which only takes a
     // plain colour).
-    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.05mch","padding":"0.3mcw","background":editor,"border-radius":"0.45mcw","border":format!("1px solid {}",border)},"c":diff_rows});
+    let diff_box = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.05mch","padding":"0.3mcw","background":editor,"border-radius":"0.45mcw","border":{"width":1,"color":border}},"c":diff_rows});
 
     // Inline review comment: avatar (with online dot) + shadowed bubble. The
     // dot's ring is the editor background so it reads as cut into the surface.
@@ -783,7 +783,7 @@ fn diff_review_scene() -> Value {
         json!({"n":"text","t":"reviewed 2h ago","s":{"color":muted,"font-size":11,"font-family":sans,"letter-spacing":"0px"}})
     ]});
     let comment_text = json!({"n":"text","t":"Good — a named constant beats a magic number. Ship it.","s":{"color":body,"font-size":13,"font-family":sans,"letter-spacing":"0px"}});
-    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.35mch","padding":"0.75mcw","background":surface2,"border-radius":"0.75mcw","border":format!("1px solid {}",border),"box-shadow":"0 8px 22px #00000055","max-width":"62%"},"c":[author, comment_text]});
+    let bubble = json!({"n":"flex","s":{"flex-direction":"column","gap":"0.35mch","padding":"0.75mcw","background":surface2,"border-radius":"0.75mcw","border":{"width":1,"color":border},"box-shadow":"0 8px 22px #00000055","max-width":"62%"},"c":[author, comment_text]});
     let comment = json!({"n":"flex","s":{"flex-direction":"row","align-items":"start","gap":"0.77mcw"},"c":[avatar, bubble]});
 
     // The comment floats *over* the diff (a review popover), positioned by a
@@ -828,7 +828,7 @@ fn wikipedia_article() -> Demo {
     let photo = json!({"n":"img","s":{"width":226,"height":142,"border-radius":4},"img":{"d":b64}});
     let cap1 = json!({"n":"text","t":"Mexican Charros Roping a Bull","s":{"color":body,"font-size":11,"font-family":sans,"letter-spacing":"0px"}});
     let cap2 = json!({"n":"text","t":"Oil painting · public domain","s":{"color":muted,"font-size":10,"font-family":sans,"letter-spacing":"0px"}});
-    let infobox = json!({"n":"flex","s":{"flex-direction":"column","gap":5,"padding":10,"width":250,"background":"#161b22","border-radius":6,"border":"1px solid #30363d"},"c":[photo, cap1, cap2]});
+    let infobox = json!({"n":"flex","s":{"flex-direction":"column","gap":5,"padding":10,"width":250,"background":"#161b22","border-radius":6,"border":{"width":1,"color":"#30363d"}},"c":[photo, cap1, cap2]});
 
     let content = json!({"n":"flex","s":{"flex-direction":"row","gap":18,"align-items":"start","width":"100%"},"c":[left, infobox]});
 
@@ -862,7 +862,7 @@ fn img_node(b64: String, w: u32, h: u32, radius: u32) -> Value {
 fn avatar_with_status(b64: String, size: u32, dot: &str, ring: &str) -> Value {
     let avatar = img_node(b64, size, size, size / 2);
     let d = (size as f64 * 0.30).round();
-    let dot = json!({"n":"box","s":{"width":d,"height":d,"border-radius":d/2.0,"background":dot,"border":format!("2px solid {}",ring)}});
+    let dot = json!({"n":"box","s":{"width":d,"height":d,"border-radius":d/2.0,"background":dot,"border":{"width":2,"color":ring}}});
     let overlay = json!({"n":"flex","s":{"width":"100%","height":"100%","justify-content":"flex-end","align-items":"flex-end"},"c":[dot]});
     json!({"n":"stack","s":{"width":size,"height":size},"c":[avatar, overlay]})
 }

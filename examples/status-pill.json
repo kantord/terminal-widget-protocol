@@ -13,9 +13,9 @@
         "n": "flex",
         "s": {
           "background": "color-mix(in srgb, term(2) 18%, term(bg))",
-          "border-radius": "0.45mcmin",
-          "padding-left": "0.6mcw",
-          "padding-right": "0.6mcw"
+          "border-radius": "0.5mcw",
+          "padding-left": "0.5mcw",
+          "padding-right": "0.5mcw"
         },
         "c": [{ "n": "mono", "t": "running", "s": { "color": "term(2)" } }]
       }

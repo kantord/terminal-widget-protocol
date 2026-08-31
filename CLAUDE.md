@@ -118,9 +118,19 @@ the hard parts. Keep these threads:
   - Payload keys: `S` (scene), `C` (component defs)
   - Nodes: `flex`, `box`, `text`, `mono`, `svg`, `img`, `stack` (+ `$param` /
     `$<name>` components)
-  - Cell units: `mcw`, `mch`, `mcmin`, `mcmax` (px and `%` also valid)
+  - Cell units: `mcw`, `mch` (px and `%` also valid). There is **no** `mcmin`/
+    `mcmax` — they were redundant (on a taller-than-wide cell `mcmin` ≡ `mcw`);
+    a pixel-square element is just the same unit on both axes.
   - Colors: `term(fg|bg|0-255)`, `transparent`, `currentColor`, `color-mix(...)`
   - Mono sizing: `scale`, `char-width`, `subscale-n`, `subscale-d`
+- **Grid stability (load-bearing).** Layout (`width`/`height`/`padding`/`gap`/
+  `flex-*`, in cell units) positions content on the grid; paint (`background`,
+  `border`, `border-radius`, effects) colours pixels and MUST NOT move a node,
+  its content, or its siblings — it MAY bleed outside the box. So a `border` is
+  non-displacing; content leaves the grid only via an explicit sub-cell `px`
+  value. The polyfill realises the typed `border` as a CSS `outline` (paint, no
+  layout, distinct from `box-shadow`) — a polyfill detail, never spec'd as how a
+  terminal "should" implement it.
 - The "unknown ⇒ ignore, never fail" rule is _the_ forward-compatibility story;
   invoke it consistently (unknown node type, style prop, header key, version).
 

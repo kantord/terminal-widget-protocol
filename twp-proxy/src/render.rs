@@ -30,7 +30,7 @@ use takumi::{
     },
 };
 
-use crate::protocol::{Border, Dimension, FontWeight, Img, Node};
+use crate::protocol::{Dimension, FontWeight, Img, Node};
 
 /// Fallback render resolution per cell when the terminal doesn't report
 /// pixel dimensions via TIOCGWINSZ.
@@ -164,19 +164,14 @@ pub(crate) fn substitute_term(value: &str) -> String {
     out
 }
 
-/// Resolve `m`-cell units (`3mcw`, `0.5mch`, `1mcmin`, `1mcmax`) embedded in a
-/// CSS *value* string to pixels, so they work in the passthrough path too (not
-/// just the typed `width`/`height`/`gap`/`padding` fields). Anything that isn't
+/// Resolve `m`-cell units (`3mcw`, `0.5mch`) embedded in a CSS *value* string to
+/// pixels, so they work in the passthrough path too (not just the typed
+/// `width`/`height`/`gap`/`padding` fields). Anything that isn't
 /// `<number><cell-unit>` is copied through untouched.
 pub(crate) fn substitute_cell_units(value: &str) -> String {
     let pc = px_per_col() as f32;
     let pr = px_per_row() as f32;
-    let units: [(&str, f32); 4] = [
-        ("mcmin", pc.min(pr)),
-        ("mcmax", pc.max(pr)),
-        ("mcw", pc),
-        ("mch", pr),
-    ];
+    let units: [(&str, f32); 2] = [("mcw", pc), ("mch", pr)];
     let b = value.as_bytes();
     let mut out = String::with_capacity(value.len());
     let mut i = 0;
@@ -969,9 +964,9 @@ fn build_style(node: &Node) -> TkStyle {
             .with(StyleDeclaration::border_bottom_right_radius(pair))
             .with(StyleDeclaration::border_bottom_left_radius(pair));
     }
-    if let Some(b) = &s.border {
-        apply_border(&mut style, b);
-    }
+    // `border` / `border-*` are real CSS border properties; they flow through
+    // the CSS value path (term()/cell-unit substitution → takumi's native
+    // border, which is border-box, per-side capable, and supports line styles).
 
     // Text
     let font_size_px = s.font_size.unwrap_or(DEFAULT_FONT_SIZE_PX);
@@ -1022,46 +1017,13 @@ fn build_style(node: &Node) -> TkStyle {
     style
 }
 
-fn apply_border(style: &mut TkStyle, b: &Border) {
-    let w = Length::Px(b.width);
-    let take = std::mem::take(style);
-    let mut next = take
-        .with(StyleDeclaration::border_top_width(w))
-        .with(StyleDeclaration::border_right_width(w))
-        .with(StyleDeclaration::border_bottom_width(w))
-        .with(StyleDeclaration::border_left_width(w))
-        .with(StyleDeclaration::border_top_style(
-            takumi::layout::style::BorderStyle::Solid,
-        ))
-        .with(StyleDeclaration::border_right_style(
-            takumi::layout::style::BorderStyle::Solid,
-        ))
-        .with(StyleDeclaration::border_bottom_style(
-            takumi::layout::style::BorderStyle::Solid,
-        ))
-        .with(StyleDeclaration::border_left_style(
-            takumi::layout::style::BorderStyle::Solid,
-        ));
-    if let Some(color) = parse_color(&b.color) {
-        let ci = ColorInput::from(color);
-        next = next
-            .with(StyleDeclaration::border_top_color(ci.clone()))
-            .with(StyleDeclaration::border_right_color(ci.clone()))
-            .with(StyleDeclaration::border_bottom_color(ci.clone()))
-            .with(StyleDeclaration::border_left_color(ci));
-    }
-    *style = next;
-}
-
-/// Resolve a cell unit (mcw/mch/mcmin/mcmax) to pixels against the live cell
-/// size; returns `None` for px/percent (handled by the callers below).
+/// Resolve a cell unit (mcw/mch) to pixels against the live cell size; returns
+/// `None` for px/percent (handled by the callers below).
 fn cell_unit_px(d: Dimension) -> Option<f32> {
     let (pc, pr) = (px_per_col() as f32, px_per_row() as f32);
     match d {
         Dimension::ColWidth(v) => Some(v * pc),
         Dimension::RowHeight(v) => Some(v * pr),
-        Dimension::CellMin(v) => Some(v * pc.min(pr)),
-        Dimension::CellMax(v) => Some(v * pc.max(pr)),
         _ => None,
     }
 }

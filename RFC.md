@@ -575,6 +575,24 @@ Style is a JSON object under `s`. Phase 1 defines a typed vocabulary; any
 property not listed is treated as a raw CSS declaration passed to the rasterizer
 (§7.5). Unknown/unparseable declarations are dropped.
 
+**Grid stability — the core invariant.** Style splits into two kinds, and they
+do not mix:
+
+- **Layout** — `width`, `height`, `padding`, `gap`, `flex-*` — expressed in cell
+  units (§7.3). Layout _positions_ things, so a node's content lands on the
+  terminal's character grid.
+- **Paint** — `background`, `border`, `border-radius`, and any decorative effect
+  (§7.5) — _colours pixels_. Paint MUST NOT change the size or position of a
+  node, its content, or its siblings. Paint MAY bleed past a node's box (an
+  overlapping border ring or shadow is fine).
+
+Consequently a `border` is painted at the node's edge and **does not displace
+its content** — a 1px border never nudges the glyphs inside it off the grid,
+whatever the axis. Content leaves the cell grid only when the author explicitly
+asks for it with a sub-cell `px` value. (How a renderer realises non-displacing
+paint is its own affair — the polyfill, for instance, draws the typed `border`
+as a CSS `outline`; §3.)
+
 ### 7.1 Layout (on `flex`)
 
 `flex-direction` (`row`|`column`|…), `justify-content`, `align-items`, `gap`,
@@ -596,18 +614,22 @@ so the bar stays aligned at any font size._
 `width`, `height`, `border-radius` take a **length** (§7.3). `gap` and `padding`
 likewise.
 
+Visual paint keys — `background`, `color`, `border-radius`, and `border`
+(`{ "width": <px>, "color": <color §8> }`, a solid edge) — colour the node and,
+per §7's grid-stability rule, never change its layout. A `border`'s `width` is
+in pixels (a hairline is 1 device pixel on every terminal); it is painted at the
+edge and may bleed outward, but does not displace the node's content.
+
 ### 7.3 Lengths and cell units
 
 A length is either a bare number (**pixels**) or a string with a unit:
 
-| Form       | Unit                          | Resolves to                                  |
-| ---------- | ----------------------------- | -------------------------------------------- |
-| `42`       | pixels                        | `42px` (escape hatch for sub-cell cosmetics) |
-| `"50%"`    | percent                       | 50% of the parent's corresponding axis       |
-| `"3mcw"`   | monospace **cell width** (x)  | `3 · px_per_col`                             |
-| `"2mch"`   | monospace **cell height** (y) | `2 · px_per_row`                             |
-| `"1mcmin"` | cell **min**                  | `1 · min(px_per_col, px_per_row)`            |
-| `"1mcmax"` | cell **max**                  | `1 · max(px_per_col, px_per_row)`            |
+| Form     | Unit                          | Resolves to                                  |
+| -------- | ----------------------------- | -------------------------------------------- |
+| `42`     | pixels                        | `42px` (escape hatch for sub-cell cosmetics) |
+| `"50%"`  | percent                       | 50% of the parent's corresponding axis       |
+| `"3mcw"` | monospace **cell width** (x)  | `3 · px_per_col`                             |
+| `"2mch"` | monospace **cell height** (y) | `2 · px_per_row`                             |
 
 **Cell units are TWP's native length unit and the key to portability.** The
 character cell is _anisotropic_ (typically ~1:2, taller than wide) and its pixel
@@ -616,17 +638,28 @@ the grid only on the terminal it was authored on; a widget sized in cell units
 aligns _everywhere_, because the renderer resolves `mcw`/`mch` against the live,
 per-terminal cell size.
 
-Because the two axes are independent, there are two base units (`mcw`, `mch`).
-For elements that must be _square in pixels_ despite the anisotropic cell —
-icons, status dots, circular avatars — `mcmin` gives the largest square that
-_fits_ within a cell (like `object-fit: contain`) and `mcmax` the smallest that
-_covers_ it (like `cover`). `N·mcmin` scales those square graphics with the
-grid.
+There are exactly two base units because the cell has two independent axes
+(`mcw`, `mch`). A cell unit resolves to a fixed pixel count regardless of which
+property it is applied to, so a **pixel-square** element — an icon, status dot,
+circular avatar — is just the _same_ unit on both sides: `width: "1mcw"` with
+`height: "1mcw"` is a `px_per_col`-by-`px_per_col` box on every terminal. (There
+is deliberately no separate "min/max" cell unit: on a taller-than-wide cell
+`mcw` is already the smaller side, so a width-only fraction would only have
+reintroduced it under another name.)
 
-Guidance: use cell units for layout (columns, gaps, padding, bars) and for SVG
-node boxes (the SVG `viewBox` preserves internal proportion); use `mcmin` for
-square/round graphics; reserve pixels for genuinely sub-cell cosmetics (a 1px
-border).
+**Cross-axis harmony is per-axis, not a fused base.** Each axis self-corrects
+against its own live pixel count — that _is_ the both-axes handling. A single
+number derived from both axes (a geometric mean, a "fits-the-cell" square) would
+bake in one terminal's aspect ratio and drift on every other. So size each axis
+in its own unit and quantise to whole or quarter cells
+(`0.25/0.5/0.75/1 · mcw |
+mch`) rather than reaching for an eyeballed decimal.
+
+Guidance: use cell units for all layout (columns, gaps, padding, bars) and for
+square/round graphics (the same unit on both axes) and SVG node boxes (the SVG
+`viewBox` preserves internal proportion). Reserve pixels for genuinely sub-cell
+cosmetics — and recall that a hairline `border` is _paint_ (§7), so its `px`
+width never shifts content regardless of axis.
 
 ### 7.4 Mono text sizing
 
@@ -895,9 +928,9 @@ Gruvbox Dark palette.
         "n": "flex",
         "s": {
           "background": "color-mix(in srgb, term(2) 18%, term(bg))",
-          "border-radius": "0.45mcmin",
-          "padding-left": "0.6mcw",
-          "padding-right": "0.6mcw"
+          "border-radius": "0.5mcw",
+          "padding-left": "0.5mcw",
+          "padding-right": "0.5mcw"
         },
         "c": [{ "n": "mono", "t": "running", "s": { "color": "term(2)" } }]
       }
@@ -922,7 +955,7 @@ Gruvbox Dark palette.
     "s": {
       "flex-direction": "row",
       "align-items": "center",
-      "gap": "0.9mcw",
+      "gap": "1mcw",
       "width": "100%",
       "height": "100%"
     },
@@ -932,18 +965,18 @@ Gruvbox Dark palette.
         "n": "flex",
         "s": {
           "flex-grow": 1,
-          "height": "0.3mch",
+          "height": "0.25mch",
           "background": "term(8)",
-          "border-radius": "0.2mcmin"
+          "border-radius": "0.25mcw"
         },
         "c": [
           {
             "n": "box",
             "s": {
               "width": "40%",
-              "height": "0.3mch",
+              "height": "0.25mch",
               "background": "term(4)",
-              "border-radius": "0.2mcmin"
+              "border-radius": "0.25mcw"
             }
           }
         ]

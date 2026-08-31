@@ -494,10 +494,12 @@ mod tests {
     }
 
     #[test]
-    fn cell_min_is_square_in_pixels() {
-        // `1mcmin` width and height must yield an equal *pixel* box even though
-        // the cell is non-square — both resolve to min(px_per_col, px_per_row).
-        let json = "{\"S\":{\"n\":\"box\",\"s\":{\"width\":\"2mcmin\",\"height\":\"2mcmin\",\"background\":\"#00ff00\"}}}";
+    fn same_unit_both_axes_is_square_in_pixels() {
+        // A cell unit resolves to a fixed pixel count regardless of axis, so the
+        // *same* unit on width and height yields a pixel-square box even though
+        // the cell itself is non-square. (This is why no separate "mcmin" unit
+        // is needed.)
+        let json = "{\"S\":{\"n\":\"box\",\"s\":{\"width\":\"2mcw\",\"height\":\"2mcw\",\"background\":\"#00ff00\"}}}";
         let img = render_payload(json, 6, 4);
         let mut max_x = 0;
         let mut max_y = 0;
@@ -513,7 +515,7 @@ mod tests {
         let (w, h) = (max_x + 1, max_y + 1);
         assert!(
             (w as i32 - h as i32).abs() <= 2,
-            "mcmin box should be square in pixels, got {w}x{h}"
+            "same-unit box should be square in pixels, got {w}x{h}"
         );
     }
 

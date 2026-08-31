@@ -122,7 +122,9 @@ pub struct Style {
     pub color: Option<String>,
     #[serde(rename = "border-radius")]
     pub border_radius: Option<Dimension>,
-    pub border: Option<Border>,
+    // `border` / `border-*` are not typed: they are the real CSS border
+    // properties (shorthand or per-side longhands), collected in `extra` and
+    // forwarded to the renderer with CSS semantics. See the grid note below.
 
     // Text
     #[serde(rename = "font-size")]
@@ -151,16 +153,16 @@ pub struct Style {
 }
 
 /// A length. A bare number is pixels; a string carries a unit:
-///   * `"50%"`    — percentage of the parent
-///   * `"3mcw"`   — monospace cell *widths* (x-axis, `n · px_per_col`)
-///   * `"2mch"`   — monospace cell *heights* (y-axis, `n · px_per_row`)
-///   * `"1mcmin"` — `n · min(px_per_col, px_per_row)` (square that *fits* a cell)
-///   * `"1mcmax"` — `n · max(px_per_col, px_per_row)` (square that *covers* a cell)
+///   * `"50%"`  — percentage of the parent
+///   * `"3mcw"` — monospace cell *widths* (x-axis, `n · px_per_col`)
+///   * `"2mch"` — monospace cell *heights* (y-axis, `n · px_per_row`)
 ///
 /// The cell units are the protocol's native, terminal-portable lengths: they
 /// resolve against the real per-terminal cell size (queried at runtime), so a
 /// widget lines up with the character grid regardless of font, size, or DPI.
-/// Pixels are the escape hatch for sub-cell cosmetics.
+/// A pixel-square element is the same unit on both axes (a cell unit resolves
+/// to a fixed pixel count whichever axis it's used on). Pixels are the escape
+/// hatch for sub-cell cosmetics.
 #[derive(Debug, Clone, Copy)]
 pub enum Dimension {
     Px(f32),
@@ -169,10 +171,6 @@ pub enum Dimension {
     ColWidth(f32),
     /// Cell heights (× px_per_row).
     RowHeight(f32),
-    /// × min(px_per_col, px_per_row) — largest square fitting in a cell.
-    CellMin(f32),
-    /// × max(px_per_col, px_per_row) — smallest square covering a cell.
-    CellMax(f32),
 }
 
 impl<'de> Deserialize<'de> for Dimension {
@@ -184,7 +182,7 @@ impl<'de> Deserialize<'de> for Dimension {
         impl serde::de::Visitor<'_> for DimVisitor {
             type Value = Dimension;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("a number (px) or a string like \"50%\", \"3mcw\", \"1mcmin\"")
+                f.write_str("a number (px) or a string like \"50%\", \"3mcw\", \"2mch\"")
             }
             fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<Dimension, E> {
                 Ok(Dimension::Px(v as f32))
@@ -207,16 +205,13 @@ impl<'de> Deserialize<'de> for Dimension {
     }
 }
 
-/// Parse a string length. Longest unit suffixes are checked first so `mcmin`
-/// isn't shadowed by `mc…`. Returns `None` on anything unrecognized.
+/// Parse a string length. Returns `None` on anything unrecognized.
 fn parse_dimension(s: &str) -> Option<Dimension> {
     let s = s.trim();
     if let Some(p) = s.strip_suffix('%') {
         return p.trim().parse().ok().map(Dimension::Percent);
     }
     for (suffix, ctor) in [
-        ("mcmin", Dimension::CellMin as fn(f32) -> Dimension),
-        ("mcmax", Dimension::CellMax as fn(f32) -> Dimension),
         ("mcw", Dimension::ColWidth as fn(f32) -> Dimension),
         ("mch", Dimension::RowHeight as fn(f32) -> Dimension),
         ("px", Dimension::Px as fn(f32) -> Dimension),
@@ -236,13 +231,6 @@ fn parse_dimension(s: &str) -> Option<Dimension> {
 pub enum FontWeight {
     Name(String),
     Number(u16),
-}
-
-/// Solid border. Phase 1 supports no other border styles.
-#[derive(Debug, Clone, Deserialize)]
-pub struct Border {
-    pub width: f32,
-    pub color: String,
 }
 
 #[cfg(test)]
